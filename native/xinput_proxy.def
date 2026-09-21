@@ -1,0 +1,4 @@
+LIBRARY xinput1_4
+EXPORTS
+    XInputGetState=TrackerGetState @2
+    XInputSetState=TrackerSetState @3

@@ -1,0 +1,9 @@
+# 统一公开源码的换行，减少不同系统编辑产生的无关差异。
+* text=auto
+*.cpp text eol=lf
+*.h text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.ps1 text eol=lf

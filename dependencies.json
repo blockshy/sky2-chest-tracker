@@ -1,0 +1,10 @@
+{
+  "imgui": {
+    "repository": "https://github.com/ocornut/imgui.git",
+    "commit": "420f1793417e39560ca39a4209c55a9f204fde13"
+  },
+  "minhook": {
+    "repository": "https://github.com/TsudaKageyu/minhook.git",
+    "commit": "8af6b4acae5a9388fd742b56fa79ece89d96f823"
+  }
+}
