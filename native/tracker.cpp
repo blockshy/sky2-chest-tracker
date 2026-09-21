@@ -208,7 +208,7 @@ static DWORD WINAPI Initialize(void*) noexcept {
         InterlockedExchangePointer(slot, reinterpret_cast<void*>(&SelectIcon));
         DWORD unused = 0;
         VirtualProtect(slot, sizeof(void*), protection, &unused);
-        Log("Sky2ChestTracker 0.3.2 active: dual regional counts, View+RS pause, automatic input prompts.");
+        Log("Sky2ChestTracker 0.3.3 active: resolution-aware UI scaling, dual regional counts, View+RS pause.");
     } catch (...) { Log("Initialization failed; exception contained."); }
     return 0;
 }

@@ -208,7 +208,7 @@ static void DrawPanel() {
         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
     float panelRight = 330;
     if (ImGui::Begin("Sky2ChestTracker", nullptr, flags)) {
-        ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "宝箱追踪  ·  0.3.2");
+        ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "宝箱追踪  ·  0.3.3");
         if (!enabled) ImGui::TextColored(ImVec4(1, 0.72f, 0.3f, 1), "地图修改已暂停（原版显示）");
         else ImGui::Text("地图口径：%s", current ? "当前周目" : "继承记录（多周目）");
         ImGui::Separator();

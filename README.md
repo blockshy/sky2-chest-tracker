@@ -2,7 +2,7 @@
 
 **Sky2 Chest Tracker** 是一个 Windows 原生 Mod，在游戏地图上显示宝箱位置，并区分当前周目与存档继承记录，辅助查找遗漏宝箱。
 
-当前 Mod 版本 **0.3.2**，安装器修订 **r1** · [下载安装包](https://github.com/blockshy/sky2-chest-tracker/releases/latest) · [构建指南](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/BUILDING.md) · [更新记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/CHANGELOG.md)
+当前 Mod 版本 **0.3.3** · [下载安装包](https://github.com/blockshy/sky2-chest-tracker/releases/latest) · [构建指南](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/BUILDING.md) · [更新记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/CHANGELOG.md)
 
 ## 功能
 
@@ -39,7 +39,7 @@ d8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf
 
 ### 使用脚本
 
-1. 从 [Releases](https://github.com/blockshy/sky2-chest-tracker/releases) 下载 `Sky2ChestTracker-0.3.2-r1.zip` 并完整解压。GitHub 自动生成的 **Source code** 压缩包只有源码，不能直接安装。r1 更新安装器和文档，游戏内仍显示 0.3.2。
+1. 从 [Releases](https://github.com/blockshy/sky2-chest-tracker/releases) 下载 `Sky2ChestTracker-0.3.3.zip` 并完整解压。GitHub 自动生成的 **Source code** 压缩包只有源码，不能直接安装。
 2. 保存进度并正常退出游戏。
 3. 在解压目录打开 PowerShell，运行下列命令，将路径替换为自己的游戏安装目录：
 
@@ -47,14 +47,14 @@ d8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf
 .\Install-Mod.ps1 -GamePath '你的游戏安装目录'
 ```
 
-4. 从 Steam 正常启动游戏；左上角应显示“宝箱追踪 · 0.3.2”。
+4. 从 Steam 正常启动游戏；左上角应显示“宝箱追踪 · 0.3.3”。
 
 安装器只复制 Mod DLL、安装记录和必要的许可文件，并核对文件哈希。更新时旧 DLL 保存在安装包目录下的 `backups/`。
 发现未知来源的同名 `xinput1_4.dll` 会停止，避免覆盖其他 Mod。无需安装 Python 或开发工具。
-已经安装 0.3.2 的玩家无需替换 DLL，后续安装／卸载使用 r1 包中的新版脚本即可。
+从 0.3.2 或 0.3.2-r1 升级需要更新 DLL，才能启用新的分辨率缩放功能；不要只替换安装脚本。
 
 更新时先退出游戏，完整解压新版安装包，再运行新版的同一条安装命令。
-如果游戏目录遗留旧版附带的说明，r1 会按已发布文件的内容哈希核对，将未修改的六份旧文档移至安装包的
+如果游戏目录遗留旧版附带的说明，安装器会按已发布文件的内容哈希核对，将未修改的六份旧文档移至安装包的
 `backups/legacy-docs-…/`；修改过的文档、未知文件及链接均保留，不递归清理目录。
 已安装相同 DLL 时运行新版安装器也可完成这项整理。
 
@@ -68,11 +68,11 @@ d8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf
 
 ### 手动安装（不运行安装脚本）
 
-1. 下载并完整解压 `Sky2ChestTracker-0.3.2-r1.zip`，保存进度并退出游戏。
+1. 下载并完整解压 `Sky2ChestTracker-0.3.3.zip`，保存进度并退出游戏。
 2. 找到包含 `sora_2nd.exe` 的游戏根目录，确认游戏版本符合上方兼容列表。
 3. 查看根目录是否已有 `xinput1_4.dll`。**若已有文件且来源不明，停止操作，不选择“替换”。**已安装本 Mod 的情况按下方更新步骤处理。
 4. 将安装包 **`dist` 内的 `xinput1_4.dll` 和 `Sky2ChestTracker` 文件夹**一起复制到游戏根目录。不要把 `dist` 本身复制进去；其中的 `manifest.json` 和 `legacy-documents.json` 是脚本资料，无需手动复制。
-5. 从 Steam 启动游戏，确认面板显示“宝箱追踪 · 0.3.2”。
+5. 从 Steam 启动游戏，确认面板显示“宝箱追踪 · 0.3.3”。
 
 安装后的必要结构如下；`tracker.log` 在运行后生成：
 
@@ -139,7 +139,7 @@ Get-FileHash -LiteralPath '你的游戏安装目录\xinput1_4.dll' -Algorithm SH
 | 有安装记录，但 DLL 已被其他 Mod 替换 | 哈希不一致，安装和卸载都停止 |
 | 安装记录损坏、缺少字段或产品不匹配 | 停止操作，保留原文件 |
 | 已有经记录和 SHA-256 核对的本 Mod DLL | 可更新，先保存并核对旧 DLL 备份；可卸载该 DLL |
-| DLL、记录或本 Mod 目录为链接／重解析点 | r1 安装器停止操作，要求先核对实际路径 |
+| DLL、记录或本 Mod 目录为链接／重解析点 | 安装器停止操作，要求先核对实际路径 |
 | 其他 Mod 使用不同 DLL 名或仅替换资源 | 没有同名文件冲突，但仍需验证运行时兼容性 |
 
 不同文件名的 Mod 仍可能同时修改地图、手柄输入、窗口消息或图形绘制；不能仅根据文件名判定兼容。
@@ -150,7 +150,7 @@ Get-FileHash -LiteralPath '你的游戏安装目录\xinput1_4.dll' -Algorithm SH
 手动拖放覆盖 DLL 不受脚本保护；脚本也不支持与其他安装器或文件替换工具同时操作游戏目录。
 检查和实际文件操作并非对所有外部程序都原子化，因此不能保证并发修改时完全避免冲突。
 
-r1 支持先预演，检查版本、安装包和现有文件归属，不复制或删除文件：
+支持先预演，检查版本、安装包和现有文件归属，不复制或删除文件：
 
 ```powershell
 .\Install-Mod.ps1 -GamePath '你的游戏安装目录' -WhatIf
@@ -202,7 +202,7 @@ Mod 不替玩家开箱，不修改物品、宝箱状态或存档；成就仍由�
 
 - **没有面板：**确认下载的是安装包、游戏 EXE 哈希匹配、DLL 位于游戏根目录，并检查日志。按 F7 或 View + B 可恢复隐藏的面板。
 - **继承视图与本周目图标不同：**这是预期行为；以前周目拿过的箱子，本周目仍可能未开。
-- **手柄组合不响应：**先切回游戏并松开所有控制，再先按 View 后按功能键；确认使用 0.3.2，RS 需要按下。
+- **手柄组合不响应：**先切回游戏并松开所有控制，再先按 View 后按功能键；确认使用当前版本，RS 需要按下。
 - **地图恢复成原版：**查看面板是否显示“地图修改已暂停”，使用 F9 或 View + RS 恢复。
 - **同名 DLL 冲突：**参见上方“与其他 Mod 共存”；安装器不会自动串联其他 XInput 代理，卸载也不会只凭文件名删除 DLL。
 - **脚本被 PowerShell 执行策略阻止：**按你自己的设备管理规则处理，或在开发环境中构建使用；项目不自动修改系统执行策略。

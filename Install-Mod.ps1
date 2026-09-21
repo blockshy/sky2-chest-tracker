@@ -24,7 +24,7 @@ foreach ($relativePath in @('dist/legacy-documents.json', 'dist/Sky2ChestTracker
     'dist/Sky2ChestTracker/THIRD_PARTY_NOTICES.md', 'dist/Sky2ChestTracker/licenses/Dear-ImGui.txt',
     'dist/Sky2ChestTracker/licenses/MinHook.txt', 'dist/Sky2ChestTracker/licenses/ED9ModManager.txt')) {
     if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $relativePath) -PathType Leaf)) {
-        throw '安装包文件不完整，未安装。请完整解压 r1 安装包，不要只复制脚本或 DLL。'
+        throw '安装包文件不完整，未安装。请完整解压安装包，不要只复制脚本或 DLL。'
     }
 }
 $legacyHashes = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'dist\legacy-documents.json') | ConvertFrom-Json

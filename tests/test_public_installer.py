@@ -10,6 +10,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# 迁移白名单针对已经发布的旧文档，不能用持续更新的当前文档替代测试输入。
+LEGACY_FIXTURES = ROOT / 'tests' / 'fixtures' / 'legacy-0.3.2'
 PWSH = shutil.which('pwsh')
 PAYLOAD = b'synthetic chest tracker DLL'
 FOREIGN = b'synthetic unrelated mod DLL'
@@ -283,8 +285,8 @@ class InstallerSafety(unittest.TestCase):
         docs = self.receipt.parent / 'docs'
         docs.mkdir()
         originals = {
-            'CONTRIBUTING.md': (ROOT / 'CONTRIBUTING.md').read_bytes(),
-            'docs/ARCHITECTURE.md': (ROOT / 'docs/ARCHITECTURE.md').read_bytes(),
+            'CONTRIBUTING.md': (LEGACY_FIXTURES / 'CONTRIBUTING.md').read_bytes(),
+            'docs/ARCHITECTURE.md': (LEGACY_FIXTURES / 'ARCHITECTURE.md').read_bytes(),
         }
         for name, data in originals.items():
             (self.receipt.parent / name).write_bytes(data)
@@ -309,12 +311,12 @@ class InstallerSafety(unittest.TestCase):
         self.write_receipt()
         docs = self.receipt.parent / 'docs'
         docs.mkdir()
-        shutil.copyfile(ROOT / 'docs' / 'ARCHITECTURE.md', docs / 'ARCHITECTURE.md')
+        shutil.copyfile(LEGACY_FIXTURES / 'ARCHITECTURE.md', docs / 'ARCHITECTURE.md')
         self.run_script('Install', True)
         self.assertFalse(docs.exists())
         archived = list((self.package / 'backups').glob('legacy-docs-*/docs/ARCHITECTURE.md'))
         self.assertEqual(len(archived), 1)
-        self.assertEqual(archived[0].read_bytes(), (ROOT / 'docs/ARCHITECTURE.md').read_bytes())
+        self.assertEqual(archived[0].read_bytes(), (LEGACY_FIXTURES / 'ARCHITECTURE.md').read_bytes())
 
     def test_missing_package_metadata_is_refused_before_install(self):
         (self.package / 'dist' / 'legacy-documents.json').unlink()

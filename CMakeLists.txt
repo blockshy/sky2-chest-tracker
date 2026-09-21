@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Sky2ChestTracker VERSION 0.3.2 LANGUAGES C CXX)
+project(Sky2ChestTracker VERSION 0.3.3 LANGUAGES C CXX)
 
 # 关闭 DLL 构建时，仅运行纯逻辑测试；CI 不需要下载或持有游戏资源。
 option(SKY2_BUILD_MOD "构建 Windows 游戏插件" ON)
