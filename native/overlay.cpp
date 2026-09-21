@@ -2,6 +2,7 @@
 // 每帧释放后缓冲视图，避免持有引用导致窗口缩放、全屏切换时 ResizeBuffers 失败。
 #include "tracker.h"
 #include "input_bridge.h"
+#include "ui_scale.h"
 #include <d3d11.h>
 #include <dxgi.h>
 #include <MinHook.h>
@@ -253,8 +254,25 @@ static HRESULT WINAPI Present(IDXGISwapChain* swap, UINT interval, UINT options)
                 if (description.OutputWindow == g_window) {
                     ImGui::SetCurrentContext(g_context);
                     HandleKeys();
+                    // 使用实际后缓冲尺寸，避免窗口坐标、Windows DPI 与渲染分辨率不一致。
+                    // 查询后立即释放引用，保持 ResizeBuffers 可用。
+                    ID3D11Texture2D* sizeBuffer = nullptr;
+                    if (FAILED(swap->GetBuffer(0, __uuidof(ID3D11Texture2D),
+                        reinterpret_cast<void**>(&sizeBuffer)))) {
+                        ImGui::SetCurrentContext(previous);
+                        return g_originalPresent(swap, interval, options);
+                    }
+                    D3D11_TEXTURE2D_DESC bufferSize{};
+                    sizeBuffer->GetDesc(&bufferSize);
+                    sizeBuffer->Release();
                     ImGui_ImplDX11_NewFrame();
                     ImGui_ImplWin32_NewFrame();
+                    const float scale = UiScale(static_cast<float>(bufferSize.Width),
+                                                static_cast<float>(bufferSize.Height));
+                    auto& io = ImGui::GetIO();
+                    io.DisplaySize = ImVec2(bufferSize.Width / scale, bufferSize.Height / scale);
+                    // ImGui 1.92+ 同时按此密度栅格化字体；所有面板继续共用逻辑尺寸。
+                    io.DisplayFramebufferScale = ImVec2(scale, scale);
                     ImGui::NewFrame();
                     DrawPanel();
                     ImGui::Render();

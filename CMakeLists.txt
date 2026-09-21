@@ -12,7 +12,7 @@ include(CTest)
 # 显式登记头文件，防止中文 MSVC 的包含文件输出解析异常导致复用陈旧对象。
 # 发布脚本另执行 clean-first；上游依赖固定到已记录的提交。
 set(TRACKER_LOCAL_HEADERS
-    native/core.h native/progress.h native/tracker.h native/controller_logic.h native/input_bridge.h)
+    native/core.h native/progress.h native/tracker.h native/controller_logic.h native/input_bridge.h native/ui_scale.h)
 list(TRANSFORM TRACKER_LOCAL_HEADERS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 set(SKY2_HAVE_CATALOG OFF)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/generated/chest_catalog.h" AND
@@ -66,7 +66,9 @@ if(BUILD_TESTING)
     endif()
     add_executable(tracker_controller_tests tests/controller_tests.cpp)
     target_include_directories(tracker_controller_tests PRIVATE native)
-    foreach(target tracker_core_tests tracker_controller_tests)
+    add_executable(tracker_ui_scale_tests tests/ui_scale_tests.cpp)
+    target_include_directories(tracker_ui_scale_tests PRIVATE native)
+    foreach(target tracker_core_tests tracker_controller_tests tracker_ui_scale_tests)
         if(MSVC)
             target_compile_options(${target} PRIVATE /utf-8 /W4)
         else()
