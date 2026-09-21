@@ -15,5 +15,5 @@
   MinHook 及其反汇编器的完整许可和版权声明见 [licenses/MinHook.txt](licenses/MinHook.txt)。
 - ED9ModManager 参考版本为 `407178493f7c06f5882a41dda0a72b338f404d09`，
   许可副本见 [licenses/ED9ModManager.txt](licenses/ED9ModManager.txt)。其代码未链接进原生 DLL。
-- Dear ImGui 和 MinHook 源码在构建时按锁定提交下载，不在本仓库复制保存；安装包另含 `dist/licenses/` 许可副本。
+- Dear ImGui 和 MinHook 源码在构建时按锁定提交下载，不在本仓库复制保存；安装包的 `dist/Sky2ChestTracker/licenses/` 包含许可副本，安装后位于 `Sky2ChestTracker/licenses/`。
 - 原始游戏资源和用户存档归各自权利人所有，不纳入源码版本控制或公开发布包。

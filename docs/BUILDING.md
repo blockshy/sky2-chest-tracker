@@ -63,9 +63,11 @@ python -m unittest discover -s tests -p 'test_public_*.py' -v
 .\tools\Package-Mod.ps1 -DllPath '.\build-release\xinput1_4.dll'
 ```
 
-输出 `release/Sky2ChestTracker-<版本>.zip` 和同名 `.sha256` 文件。脚本只打包明确列出的 DLL、安装脚本、正式文档和许可证。
+输出 `release/Sky2ChestTracker-<版本>.zip` 和同名 `.sha256` 文件。脚本只打包明确列出的 DLL、安装脚本、玩家 README、安装数据和许可证；开发文档不进入玩家包。
 暂存目录保留在被忽略的 `release/` 中；不要将整个工作目录压缩发布。
 安装需要解压整个 ZIP，再使用 `Install-Mod.ps1 -GamePath ...`。
+手动安装时仅复制 `dist/xinput1_4.dll` 与 `dist/Sky2ChestTracker/`；后者包含与 DLL 配套的归属记录和许可证。
+`installer/legacy-documents.json` 记录首次公开版六份文档的 SHA-256，计算前按 UTF-8 文本读取、去掉 BOM 并统一为 LF；它只用于识别可归档的旧文档，不用于 DLL 身份判断。
 
 只更新安装器或文档、继续使用原有已验证 DLL 时，可添加 `-PackageRevision r1`，生成
 `Sky2ChestTracker-<版本>-r1.zip` 及对应校验文件。修订号不改变游戏内版本，也不能用来省略 DLL 修改后的构建与验证。

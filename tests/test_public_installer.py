@@ -35,15 +35,23 @@ class InstallerSafety(unittest.TestCase):
         self.game = self.root / '游戏目录 [test]'
         self.game.mkdir()
         (self.game / 'sora_2nd.exe').write_text('SKY2 INSTALLER TEST FIXTURE', encoding='utf-8')
-        (self.package / 'dist' / 'licenses').mkdir(parents=True)
-        (self.package / 'docs').mkdir()
-        for name in ('Install-Mod.ps1', 'Uninstall-Mod.ps1', 'README.md', 'LICENSE',
-                     'CHANGELOG.md', 'CONTRIBUTING.md', 'THIRD_PARTY_NOTICES.md'):
+        self.packaged_mod = self.package / 'dist' / 'Sky2ChestTracker'
+        (self.packaged_mod / 'licenses').mkdir(parents=True)
+        for name in ('Install-Mod.ps1', 'Uninstall-Mod.ps1', 'README.md'):
             shutil.copyfile(ROOT / name, self.package / name)
-        for document in ('BUILDING.md', 'ARCHITECTURE.md', 'TESTING.md'):
-            shutil.copyfile(ROOT / 'docs' / document, self.package / 'docs' / document)
+        for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
+            shutil.copyfile(ROOT / name, self.packaged_mod / name)
+        for name in ('Dear-ImGui.txt', 'MinHook.txt', 'ED9ModManager.txt'):
+            shutil.copyfile(ROOT / 'licenses' / name, self.packaged_mod / 'licenses' / name)
+        shutil.copyfile(ROOT / 'installer' / 'legacy-documents.json',
+                        self.package / 'dist' / 'legacy-documents.json')
         self.source = self.package / 'dist' / 'xinput1_4.dll'
         self.source.write_bytes(PAYLOAD)
+        (self.packaged_mod / 'install.json').write_text(json.dumps({
+            'product': 'Sky2ChestTracker', 'version': '0.3.2',
+            'dll_sha256': digest(PAYLOAD), 'installed_at': None,
+            'installation_method': 'manual-package-template'
+        }), encoding='utf-8')
         (self.package / 'dist' / 'manifest.json').write_text(json.dumps({
             'version': '0.3.2', 'dll_sha256': digest(PAYLOAD)
         }), encoding='utf-8')
@@ -159,6 +167,10 @@ class InstallerSafety(unittest.TestCase):
         """正常安装后只卸载被记录的 DLL，保留其他 Mod、存档、文档和记录。"""
         self.run_script('Install', True)
         self.assertEqual(self.target.read_bytes(), PAYLOAD)
+        # 精简安装不在游戏目录投放玩家说明或开发文档。
+        self.assertFalse((self.receipt.parent / 'docs').exists())
+        for name in ('README.md', 'CHANGELOG.md', 'CONTRIBUTING.md'):
+            self.assertFalse((self.receipt.parent / name).exists())
         receipt = json.loads(self.receipt.read_text(encoding='utf-8-sig'))
         self.assertEqual(receipt['product'], 'Sky2ChestTracker')
         self.assertEqual(receipt['dll_sha256'].lower(), digest(PAYLOAD))
@@ -176,6 +188,77 @@ class InstallerSafety(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_bytes(), OLD)
 
+    def manual_install(self):
+        """模拟资源管理器完整复制 DLL 与配套文件夹，不运行安装脚本。"""
+        shutil.copyfile(self.source, self.target)
+        shutil.copytree(self.packaged_mod, self.receipt.parent, dirs_exist_ok=True)
+
+    def test_manual_install_then_script_uninstall(self):
+        self.manual_install()
+        before = self.snapshot()
+        del before[str(self.target.relative_to(self.root))]
+        self.run_script('Uninstall', True)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_manual_install_then_script_update(self):
+        self.manual_install()
+        # 模拟先手动装过旧版：DLL 与旧版配套记录必须同时属于旧版本。
+        self.target.write_bytes(OLD)
+        self.write_receipt(OLD)
+        self.run_script('Install', True)
+        self.assertEqual(self.target.read_bytes(), PAYLOAD)
+        backups = list((self.package / 'backups').glob('*.dll'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), OLD)
+
+    def test_script_install_then_complete_manual_update(self):
+        self.run_script('Install', True)
+        self.target.write_bytes(OLD)
+        self.write_receipt(OLD)
+        # 完整手动更新必须把 DLL 和新包记录配套覆盖，随后脚本才能识别。
+        self.manual_install()
+        before = self.snapshot()
+        del before[str(self.target.relative_to(self.root))]
+        self.run_script('Uninstall', True)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_manual_dll_only_is_not_owned(self):
+        self.target.write_bytes(PAYLOAD)
+        self.assert_refused_without_changes()
+
+    def test_manual_record_cannot_claim_foreign_dll(self):
+        self.manual_install()
+        self.target.write_bytes(FOREIGN)
+        self.assert_refused_without_changes()
+
+    def test_unknown_nonempty_mod_directory_is_not_taken_over(self):
+        self.receipt.parent.mkdir()
+        (self.receipt.parent / 'personal.txt').write_bytes(b'unknown directory')
+        before = self.snapshot()
+        self.run_script('Install', False, message='缺少安装记录')
+        self.assertEqual(self.snapshot(), before)
+
+    def test_foreign_leftover_receipt_is_not_taken_over(self):
+        self.write_receipt(FOREIGN, product='AnotherMod')
+        before = self.snapshot()
+        self.run_script('Install', False, message='残留安装记录不属于本 Mod')
+        self.assertEqual(self.snapshot(), before)
+
+    def test_manual_dll_only_update_leaves_stale_receipt(self):
+        self.run_script('Install', True)
+        self.target.write_bytes(OLD)
+        self.assert_refused_without_changes()
+
+    def test_script_install_then_manual_uninstall_then_reinstall(self):
+        self.run_script('Install', True)
+        # 手动只移走已确认的 DLL，留下安装记录；重新安装应正确恢复 DLL。
+        self.target.rename(self.root / 'manually-removed.dll')
+        (self.receipt.parent / 'personal.txt').write_bytes(b'keep user file')
+        self.run_script('Install', True)
+        self.assertEqual(self.target.read_bytes(), PAYLOAD)
+        self.assertEqual((self.root / 'manually-removed.dll').read_bytes(), PAYLOAD)
+        self.assertEqual((self.receipt.parent / 'personal.txt').read_bytes(), b'keep user file')
+
     def test_corrupt_existing_backup_blocks_update(self):
         """已有备份损坏时不能继续更新，以免失去可恢复的旧版副本。"""
         self.target.write_bytes(OLD)
@@ -191,6 +274,52 @@ class InstallerSafety(unittest.TestCase):
         self.write_receipt()
         before = self.snapshot()
         self.run_script('Install', True)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_legacy_docs_are_archived_without_losing_custom_files(self):
+        """只搬走已知原版说明；保留修改后的同名文档和 docs 中的其他文件。"""
+        self.target.write_bytes(PAYLOAD)
+        self.write_receipt()
+        docs = self.receipt.parent / 'docs'
+        docs.mkdir()
+        originals = {
+            'CONTRIBUTING.md': (ROOT / 'CONTRIBUTING.md').read_bytes(),
+            'docs/ARCHITECTURE.md': (ROOT / 'docs/ARCHITECTURE.md').read_bytes(),
+        }
+        for name, data in originals.items():
+            (self.receipt.parent / name).write_bytes(data)
+        custom_readme = self.receipt.parent / 'README.md'
+        custom_readme.write_bytes(b'user modified readme')
+        (docs / 'personal.txt').write_bytes(b'user notes')
+        before = self.snapshot()
+        self.run_script('Install', True, '-Preview')
+        self.assertEqual(self.snapshot(), before)
+        self.run_script('Install', True)
+        backups = list((self.package / 'backups').glob('legacy-docs-*'))
+        self.assertEqual(len(backups), 1)
+        for name, data in originals.items():
+            self.assertFalse((self.receipt.parent / name).exists())
+            self.assertEqual((backups[0] / name).read_bytes(), data)
+        self.assertEqual(custom_readme.read_bytes(), b'user modified readme')
+        self.assertEqual((docs / 'personal.txt').read_bytes(), b'user notes')
+        self.assertEqual(self.target.read_bytes(), PAYLOAD)
+
+    def test_legacy_empty_docs_directory_is_removed(self):
+        self.target.write_bytes(PAYLOAD)
+        self.write_receipt()
+        docs = self.receipt.parent / 'docs'
+        docs.mkdir()
+        shutil.copyfile(ROOT / 'docs' / 'ARCHITECTURE.md', docs / 'ARCHITECTURE.md')
+        self.run_script('Install', True)
+        self.assertFalse(docs.exists())
+        archived = list((self.package / 'backups').glob('legacy-docs-*/docs/ARCHITECTURE.md'))
+        self.assertEqual(len(archived), 1)
+        self.assertEqual(archived[0].read_bytes(), (ROOT / 'docs/ARCHITECTURE.md').read_bytes())
+
+    def test_missing_package_metadata_is_refused_before_install(self):
+        (self.package / 'dist' / 'legacy-documents.json').unlink()
+        before = self.snapshot()
+        self.run_script('Install', False, message='安装包文件不完整')
         self.assertEqual(self.snapshot(), before)
 
     def test_preview_fresh_install(self):

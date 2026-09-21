@@ -32,16 +32,24 @@ Copy-Item -LiteralPath $dll -Destination (Join-Path $stageDist 'xinput1_4.dll')
    exe_sha256 = 'd8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf';
    imgui_commit = $dependencies.imgui.commit; minhook_commit = $dependencies.minhook.commit } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stageDist 'manifest.json') -Encoding utf8
-foreach ($file in @('README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'Install-Mod.ps1', 'Uninstall-Mod.ps1')) {
+foreach ($file in @('README.md', 'Install-Mod.ps1', 'Uninstall-Mod.ps1')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination (Join-Path $stage $file)
 }
-New-Item -ItemType Directory -Path (Join-Path $stage 'docs'),(Join-Path $stage 'licenses'),(Join-Path $stageDist 'licenses') -Force | Out-Null
-foreach ($file in @('BUILDING.md', 'ARCHITECTURE.md', 'TESTING.md')) {
-    Copy-Item -LiteralPath (Join-Path $projectRoot "docs/$file") -Destination (Join-Path $stage "docs/$file")
+# 手动安装只需复制 dist 中的 DLL 和同名 Mod 文件夹。模板记录与该 DLL 绑定，
+# 以后改用脚本仍可核对归属；不预填虚假的安装时间，也不包含本机路径。
+$stageMod = Join-Path $stageDist 'Sky2ChestTracker'
+New-Item -ItemType Directory -Path (Join-Path $stageMod 'licenses') -Force | Out-Null
+@{ product = 'Sky2ChestTracker'; version = $version;
+   dll_sha256 = (Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash;
+   exe_sha256 = 'd8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf';
+   installed_at = $null; installation_method = 'manual-package-template' } |
+    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $stageMod 'install.json') -Encoding utf8
+foreach ($file in @('LICENSE', 'THIRD_PARTY_NOTICES.md')) {
+    Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination (Join-Path $stageMod $file)
 }
+Copy-Item -LiteralPath (Join-Path $projectRoot 'installer/legacy-documents.json') -Destination (Join-Path $stageDist 'legacy-documents.json')
 foreach ($file in @('Dear-ImGui.txt', 'MinHook.txt', 'ED9ModManager.txt')) {
-    Copy-Item -LiteralPath (Join-Path $projectRoot "licenses/$file") -Destination (Join-Path $stage "licenses/$file")
-    Copy-Item -LiteralPath (Join-Path $projectRoot "licenses/$file") -Destination (Join-Path $stageDist "licenses/$file")
+    Copy-Item -LiteralPath (Join-Path $projectRoot "licenses/$file") -Destination (Join-Path $stageMod "licenses/$file")
 }
 $archive = Join-Path $outputRoot "Sky2ChestTracker-$packageVersion.zip"
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force

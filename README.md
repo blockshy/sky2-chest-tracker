@@ -2,7 +2,7 @@
 
 **Sky2 Chest Tracker** 是一个 Windows 原生 Mod，在游戏地图上显示宝箱位置，并区分当前周目与存档继承记录，辅助查找遗漏宝箱。
 
-当前 Mod 版本 **0.3.2**，安装器修订 **r1** · [下载安装包](https://github.com/blockshy/sky2-chest-tracker/releases/latest) · [构建指南](docs/BUILDING.md) · [更新记录](CHANGELOG.md)
+当前 Mod 版本 **0.3.2**，安装器修订 **r1** · [下载安装包](https://github.com/blockshy/sky2-chest-tracker/releases/latest) · [构建指南](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/BUILDING.md) · [更新记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/CHANGELOG.md)
 
 ## 功能
 
@@ -34,6 +34,10 @@ d8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf
 
 ## 安装
 
+可以使用脚本，也可以按下方步骤手动复制；两种方式使用同一份 DLL 与归属记录。
+
+### 使用脚本
+
 1. 从 [Releases](https://github.com/blockshy/sky2-chest-tracker/releases) 下载 `Sky2ChestTracker-0.3.2-r1.zip` 并完整解压。GitHub 自动生成的 **Source code** 压缩包只有源码，不能直接安装。r1 更新安装器和文档，游戏内仍显示 0.3.2。
 2. 保存进度并正常退出游戏。
 3. 在解压目录打开 PowerShell，运行下列命令，将路径替换为自己的游戏安装目录：
@@ -44,9 +48,14 @@ d8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf
 
 4. 从 Steam 正常启动游戏；左上角应显示“宝箱追踪 · 0.3.2”。
 
-安装器只复制 Mod DLL、安装记录、说明和许可证，并核对文件哈希。更新时旧 DLL 保存在安装包目录下的 `backups/`。
+安装器只复制 Mod DLL、安装记录和必要的许可文件，并核对文件哈希。更新时旧 DLL 保存在安装包目录下的 `backups/`。
 发现未知来源的同名 `xinput1_4.dll` 会停止，避免覆盖其他 Mod。无需安装 Python 或开发工具。
 已经安装 0.3.2 的玩家无需替换 DLL，后续安装／卸载使用 r1 包中的新版脚本即可。
+
+更新时先退出游戏，完整解压新版安装包，再运行新版的同一条安装命令。
+如果游戏目录遗留旧版附带的说明，r1 会按已发布文件的内容哈希核对，将未修改的六份旧文档移至安装包的
+`backups/legacy-docs-…/`；修改过的文档、未知文件及链接均保留，不递归清理目录。
+已安装相同 DLL 时运行新版安装器也可完成这项整理。
 
 卸载时先退出游戏，再运行：
 
@@ -55,6 +64,67 @@ d8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf
 ```
 
 卸载会保留存档和日志。日志位于游戏目录的 `Sky2ChestTracker/tracker.log`。
+
+### 手动安装（不运行安装脚本）
+
+1. 下载并完整解压 `Sky2ChestTracker-0.3.2-r1.zip`，保存进度并退出游戏。
+2. 找到包含 `sora_2nd.exe` 的游戏根目录，确认游戏版本符合上方兼容列表。
+3. 查看根目录是否已有 `xinput1_4.dll`。**若已有文件且来源不明，停止操作，不选择“替换”。**已安装本 Mod 的情况按下方更新步骤处理。
+4. 将安装包 **`dist` 内的 `xinput1_4.dll` 和 `Sky2ChestTracker` 文件夹**一起复制到游戏根目录。不要把 `dist` 本身复制进去；其中的 `manifest.json` 和 `legacy-documents.json` 是脚本资料，无需手动复制。
+5. 从 Steam 启动游戏，确认面板显示“宝箱追踪 · 0.3.2”。
+
+安装后的必要结构如下；`tracker.log` 在运行后生成：
+
+```text
+游戏根目录/
+├─ sora_2nd.exe
+├─ xinput1_4.dll
+└─ Sky2ChestTracker/
+   ├─ install.json
+   ├─ LICENSE
+   ├─ THIRD_PARTY_NOTICES.md
+   └─ licenses/
+```
+
+`install.json` 是该安装包 DLL 的配套归属记录，必须一并复制。它不包含个人路径或存档信息。
+许可证需要保留；玩家说明放在 ZIP 根目录，构建、测试和贡献文档只留在 GitHub。
+
+### 手动更新
+
+1. 保存进度并退出游戏，完整解压新版安装包。
+2. 核对当前 DLL 的 SHA-256 是否与现有 `Sky2ChestTracker/install.json` 中的 `dll_sha256` 一致，且 `product` 为 `Sky2ChestTracker`。不一致或缺少记录时停止，不凭文件名判断归属。
+3. 将当前 DLL 和 `install.json` 备份到游戏目录外；保留这份备份以便回退。
+4. 将新版 `dist` 中的 DLL 与 `Sky2ChestTracker` 文件夹一起复制到游戏根目录，替换本 Mod 对应文件；保留日志、用户文件及其他 Mod 文件，不先删除整个目录。
+5. 启动游戏验证。若需回退，应配套还原旧 DLL 和旧记录，不能只还原其中一个。
+
+### 手动卸载
+
+1. 保存进度并退出游戏。
+2. 按上方相同方法核对当前 DLL 与安装记录，确认确实是本 Mod。若被其他 Mod 替换、哈希不一致或来源不明，停止删除。
+3. 只移走或删除游戏根目录中经核对的 `xinput1_4.dll`；不需要删除整个 `Sky2ChestTracker` 文件夹。残留记录、日志和许可证不会加载 Mod，也不会影响存档。
+
+Windows 用户可在 PowerShell 中运行下面这条**只读查询命令**查看哈希，不需要执行安装／卸载脚本。
+也可使用已有校验工具的 SHA-256 功能。比较时忽略字母大小写。
+
+```powershell
+Get-FileHash -LiteralPath '你的游戏安装目录\xinput1_4.dll' -Algorithm SHA256
+```
+
+手动安装不会自动核对游戏 EXE；如需确认版本，也可用同一条查询命令改为检查 `sora_2nd.exe`，与上方公布的哈希比较。
+
+### 手动与脚本混用
+
+| 操作顺序 | 结果与要求 |
+| --- | --- |
+| 完整手动安装 → 脚本卸载或更新 | 支持；脚本重新核对配套记录和当前 DLL 哈希 |
+| 脚本安装 → 完整手动更新 → 脚本卸载 | 支持；手动更新必须同时复制新版 DLL 和新版记录 |
+| 只手动复制 DLL，缺少记录 | 脚本拒绝覆盖或卸载，不猜测归属 |
+| 只手动更新 DLL，仍留着旧记录 | 哈希不一致时停止；恢复配套 DLL／记录后再操作 |
+| 安装后 DLL 被其他 Mod 替换 | 脚本停止，保留当前文件 |
+| 手动移走本 Mod DLL 后，再运行安装脚本 | 支持重新安装；不会清理残留目录中的用户文件 |
+
+不要为了通过检查而手工更改 `dll_sha256`，也不要把本 Mod 的记录套用到来源不明的 DLL。
+手动复制或删除不具备脚本的自动保护，需要自行完成核对。
 
 ### 与其他 Mod 共存
 
@@ -140,19 +210,19 @@ Mod 不替玩家开箱，不修改物品、宝箱状态或存档；成就仍由�
 
 已完成宝箱状态、读档回退、地区统计、清单、Xbox 组合键、热切换和重连的实机验证。
 未逐箱走访全部 566 个宝箱；全部章节、楼层、其他手柄类型、DXVK 及第三方注入工具组合尚未全面验证。
-详见 [测试说明](docs/TESTING.md)。
+详见 [测试说明](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/TESTING.md)。
 
 ## 开发与贡献
 
-- [从干净源码构建](docs/BUILDING.md)：Windows SDK、MSVC、CMake、Python 和固定版本依赖。
-- [实现结构](docs/ARCHITECTURE.md)：状态语义、版本门禁、地图挂钩、绘制与输入接入。
-- [贡献指南](CONTRIBUTING.md)：报告问题、验证修改及提交范围。
+- [从干净源码构建](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/BUILDING.md)：Windows SDK、MSVC、CMake、Python 和固定版本依赖。
+- [实现结构](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/ARCHITECTURE.md)：状态语义、版本门禁、地图挂钩、绘制与输入接入。
+- [贡献指南](https://github.com/blockshy/sky2-chest-tracker/blob/main/CONTRIBUTING.md)：报告问题、验证修改及提交范围。
 
 仓库不包含游戏资源、生成目录、玩家存档、内存快照、研究中间文件或编译产物。
 安装包作为 GitHub Release 附件提供。目录生成器只读取开发者自己安装的游戏资源。
 
 ## 许可与致谢
 
-整个项目采用 **[PolyForm Noncommercial 1.0.0](LICENSE)**，仅用于其许可的非商业用途。
-第三方组件保留各自许可与版权声明，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+整个项目采用 **[PolyForm Noncommercial 1.0.0](https://github.com/blockshy/sky2-chest-tracker/blob/main/LICENSE)**，仅用于其许可的非商业用途。
+第三方组件保留各自许可与版权声明，见 [第三方来源](https://github.com/blockshy/sky2-chest-tracker/blob/main/THIRD_PARTY_NOTICES.md)。安装包内的许可证位于 `dist/Sky2ChestTracker/`。
 这是非官方社区 Mod，与游戏开发商、发行商及 Valve 无隶属关系；游戏内容归各自权利人所有。
