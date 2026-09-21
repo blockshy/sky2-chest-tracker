@@ -67,6 +67,9 @@ python -m unittest discover -s tests -p 'test_public_*.py' -v
 暂存目录保留在被忽略的 `release/` 中；不要将整个工作目录压缩发布。
 安装需要解压整个 ZIP，再使用 `Install-Mod.ps1 -GamePath ...`。
 
+只更新安装器或文档、继续使用原有已验证 DLL 时，可添加 `-PackageRevision r1`，生成
+`Sky2ChestTracker-<版本>-r1.zip` 及对应校验文件。修订号不改变游戏内版本，也不能用来省略 DLL 修改后的构建与验证。
+
 ## 构建一致性
 
 项目显式声明本地头文件依赖，发布构建仍使用 `--clean-first`。
