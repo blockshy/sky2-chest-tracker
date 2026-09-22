@@ -13,7 +13,7 @@ int main() {
         if (!condition) { std::printf("FAIL: %s\n", description); ++failures; }
     };
     using namespace tracker;
-    check(Icon(Mode::Current, false, true) == kClosedIcon, "上周目拿过不能把本周目未开箱标为已开");
+    check(Icon(Mode::Current, false, true) == kClosedIcon, "上周目已开不能把本周目未开箱标为已开");
     check(Icon(Mode::Inherited, false, true) == kOpenedIcon, "继承视图应显示历史已收集");
     check(Icon(Mode::Inherited, true, false) == kOpenedIcon, "新开箱应立即计入继承视图");
     check(Icon(Mode::Current, true, true) == kOpenedIcon, "当前已开显示开启图标");
@@ -43,9 +43,9 @@ int main() {
     maps = CountMaps(bits.data(), bits.size());
     check(aina(maps).current == 1 && aina(maps).inherited == 3, "同一地图独立保留两组计数");
     check(aina(maps).Remaining(Mode::Current) == 2 && aina(maps).Remaining(Mode::Inherited) == 0,
-          "待收集数量必须跟随所选统计口径");
+          "未开数量必须跟随所选统计口径");
     check(VisibleMaps(maps, Mode::Current, true).size() == 59 && VisibleMaps(maps, Mode::Inherited, true).size() == 58,
-          "继承已完成的地图在当前周目筛选中仍可能存在遗漏");
+          "继承已完成的地图在本周目筛选中仍可能存在遗漏");
     check(VisibleMaps(maps, Mode::Inherited, false).size() == 59, "全部地图筛选仍保留已完成地图");
     // 新开箱尚未设置继承位也必须立即计入累计；重新传入旧位图则应回退。
     bits.fill(0);

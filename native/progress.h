@@ -15,7 +15,7 @@ struct MapProgress {
     unsigned inherited = 0;
     unsigned total = 0;
 
-    // “待收集”与地图图标使用同一口径，继承视图包含本周目新打开的箱子。
+    // “未开”与地图图标使用同一口径，继承视图包含本周目新打开的箱子。
     unsigned Collected(Mode mode) const noexcept { return mode == Mode::Current ? current : inherited; }
     unsigned Remaining(Mode mode) const noexcept { return total - Collected(mode); }
 };

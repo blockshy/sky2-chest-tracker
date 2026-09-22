@@ -2,6 +2,7 @@
 // 每帧释放后缓冲视图，避免持有引用导致窗口缩放、全屏切换时 ResizeBuffers 失败。
 #include "tracker.h"
 #include "input_bridge.h"
+#include "exploration.h"
 #include "ui_scale.h"
 #include <d3d11.h>
 #include <dxgi.h>
@@ -25,7 +26,7 @@ static bool g_missingOnly = true;
 static size_t g_mapPage = 0;
 static constexpr size_t kRowsPerPage = 12;
 
-// 两种输入来源共用相同的动作处理，确保口径切换、筛选和分页行为完全一致。
+// 两种输入来源共用相同的动作处理，确保显示模式切换、筛选和分页行为完全一致。
 static void ApplyActions(uint32_t actions) {
     if (actions & ToggleMode) {
         const bool current = g_mode.load() == Mode::Current;
@@ -36,8 +37,12 @@ static void ApplyActions(uint32_t actions) {
     if (actions & TogglePanel) g_panel.store(!g_panel.load());
     if (actions & ToggleEnabled) {
         g_enabled.store(!g_enabled.load());
-        Log(g_enabled.load() ? "Map hook resumed." : "Map hook paused.");
+        Log(g_enabled.load() ? "Chest markers resumed." : "Chest markers paused.");
     }
+    // 探索模块自行检查可用性；这里仅提交开关意图，不直接读写游戏对象或存档。
+    // 宝箱标记的暂停开关与探索辅助互相独立，避免 F9 同时改变两类功能。
+    if (actions & ToggleMapReveal) ToggleExploration(ExplorationFeature::MapReveal);
+    if (actions & ToggleTravelUnlock) ToggleExploration(ExplorationFeature::TravelUnlock);
     if (actions & ToggleList) {
         g_mapList = !g_panel.load() || !g_mapList;
         if (g_mapList) g_panel.store(true);
@@ -53,15 +58,16 @@ static void ApplyActions(uint32_t actions) {
 
 // 仅在前台处理动作；按下沿防止长按连续切换，后台积压的手柄指令直接清空。
 static void HandleKeys() {
-    static bool previous[7]{};
+    static KeyboardFilter keyboard;
     const int keys[] = {VK_F6, VK_F7, VK_F9, VK_F8, VK_F10, VK_PRIOR, VK_NEXT};
     const bool foreground = GetForegroundWindow() == g_window;
     uint32_t actions = TakeInputActions();
+    uint32_t down = 0;
     for (int i = 0; i < 7; ++i) {
-        const bool down = (GetAsyncKeyState(keys[i]) & 0x8000) != 0;
-        if (down && !previous[i]) actions |= 1u << i;
-        previous[i] = down;
+        if ((GetAsyncKeyState(keys[i]) & 0x8000) != 0) down |= 1u << i;
     }
+    const bool control = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+    actions |= keyboard.Update(down, control, foreground);
     if (foreground) ApplyActions(actions);
 }
 
@@ -115,20 +121,175 @@ static bool InitializeGui(IDXGISwapChain* swap) {
     return true;
 }
 
+// 宝箱快捷键与探索辅助共用两列宽度，使下方组合键精确对齐上方右组按键。
+// 左列按最长等待状态预留空间，避免开关状态变化时挤压右列或使快捷键横向跳动。
+struct PanelShortcutLayout {
+    float keyWidth = 0;
+    float leftWidth = 0;
+    float windowWidth = 0;
+};
+
+// 宽度由实际字体测量决定，键鼠不再为较长的手柄组合键预留空白。
+// 同一输入模式按最长状态和三位数计数预留空间，避免开箱、切换模式或等待刷新时跳宽。
+static PanelShortcutLayout MeasurePanelShortcutLayout(bool controller) {
+    const auto textWidth = [](const char* text) { return ImGui::CalcTextSize(text).x; };
+    const auto& style = ImGui::GetStyle();
+    PanelShortcutLayout layout;
+    layout.keyWidth = textWidth(controller ? "View + RS" : "F9") + 8.0f;
+    layout.leftWidth = std::max(textWidth("未到访传送点：等待关闭"),
+        layout.keyWidth + std::max(textWidth("切换模式"), textWidth("地图清单")));
+    const float rightWidth = std::max(
+        layout.keyWidth + std::max(textWidth("显示/隐藏"), textWidth("暂停/恢复")),
+        textWidth(controller ? "View + 十字键下" : "Ctrl + F8"));
+    float contentWidth = layout.leftWidth + rightWidth + style.CellPadding.x * 4;
+    for (const char* text : {"显示模式：继承记录（多周目）", "宝箱标记已暂停（原版显示）",
+                            "继承记录当前地区已开  566 / 566", "打开区域地图后显示两组地区统计",
+                            "闭合箱标：未开    开启箱标：已开"})
+        contentWidth = std::max(contentWidth, textWidth(text));
+    if (controller)
+        contentWidth = std::max(contentWidth, textWidth("View：双窗口键；RS：按下右摇杆"));
+    // 两侧内边距和少量像素取整余量不属于内容列，防止缩放后最后一个字贴边。
+    layout.windowWidth = contentWidth + style.WindowPadding.x * 2 + 4.0f;
+    return layout;
+}
+
+static bool BeginPanelShortcutColumns(const char* id, const PanelShortcutLayout& layout) {
+    if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp)) return false;
+    ImGui::TableSetupColumn("左组", ImGuiTableColumnFlags_WidthFixed, layout.leftWidth);
+    ImGui::TableSetupColumn("右组", ImGuiTableColumnFlags_WidthStretch);
+    return true;
+}
+
+// 主面板与地图清单共用按键绘制：完整按键使用同一高亮色，动作保持正文颜色。
+// 以相对间距补齐键名宽度，避免表格内绝对偏移重复叠加列起点，导致右列文字裁切。
+static void DrawShortcutHint(const char* key, const char* action, float keyWidth) {
+    ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "%s", key);
+    ImGui::SameLine(0.0f, keyWidth - ImGui::CalcTextSize(key).x);
+    ImGui::TextUnformatted(action);
+}
+
+// 每组内部的按键与动作保持对齐；仅改变提示绘制，不修改输入、组合键屏蔽和热切换。
+static void DrawChestShortcuts(bool controller, const PanelShortcutLayout& layout) {
+    if (BeginPanelShortcutColumns("ChestShortcuts", layout)) {
+        const char* keys[] = {controller ? "View + X" : "F6", controller ? "View + B" : "F7",
+                              controller ? "View + A" : "F8", controller ? "View + RS" : "F9"};
+        const char* actions[] = {"切换模式", "显示/隐藏", "地图清单", "暂停/恢复"};
+        for (unsigned i = 0; i < 4; ++i) {
+            if (i % 2 == 0) ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            DrawShortcutHint(keys[i], actions[i], layout.keyWidth);
+        }
+        ImGui::EndTable();
+    }
+    // 修饰键说明仅在手柄模式下保留一行；按住状态复用同一行，不额外撑高面板。
+    if (controller) ImGui::TextDisabled("%s", ControllerModifierHeld() ?
+        "View 已按住；RS：按下右摇杆" : "View：双窗口键；RS：按下右摇杆");
+}
+
+static void DrawExplorationStatus(const ExplorationStatus& exploration, bool controller,
+                                   const PanelShortcutLayout& layout) {
+    ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "探索辅助");
+    // 名称与状态紧接显示，取消独立状态列；等待状态仍明确标识为未完成请求。
+    // 右列使用与宝箱快捷键相同的位置和高亮色，方向名称保留中文以避免箭头缺字。
+    if (BeginPanelShortcutColumns("ExplorationStatus", layout)) {
+        const auto row = [](const char* name, bool available, bool enabled, bool pending,
+                             bool requested, const char* key) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%s：", name);
+            const char* state = !available ? "不可用" : pending ? (requested ? "等待开启" : "等待关闭") :
+                                enabled ? "已开启" : "已关闭";
+            const ImVec4 color = !available || pending ? ImVec4(1, 0.74f, 0.34f, 1) :
+                enabled ? ImVec4(0.5f, 0.91f, 0.8f, 1) : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::TextColored(color, "%s", state);
+            ImGui::TableNextColumn();
+            ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "%s", key);
+        };
+        row("地图全显", exploration.mapAvailable, exploration.mapEnabled, false, false,
+            controller ? "View + 十字键上" : "Ctrl + F6");
+        row("未到访传送点", exploration.travelAvailable, exploration.travelEnabled,
+            exploration.travelPending, exploration.travelRequested, controller ? "View + 十字键下" : "Ctrl + F8");
+        ImGui::EndTable();
+    }
+    // 底部只有一个提示槽：故障优先，其次等待，正常时才显示简短功能边界。
+    // 完整范围和测试说明保留在文档中，不在每帧面板反复展开三到四段文字。
+    const char* note = !exploration.mapAvailable || !exploration.travelAvailable ?
+        "功能校验未通过，详见 tracker.log。" : exploration.travelPending ?
+        "等待刷新：打开地图或结束确认/转场。" : "重启关闭；传送可能越过入口剧情。";
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", note);
+    ImGui::PopStyleColor();
+}
+
+// 清单页脚采用三列两行：模式/筛选/收起在上，上一页/下一页在下。
+// 每个手柄操作都保留完整 View 组合，翻页也拆成两个独立提示，不依赖共享前缀。
+static void DrawMapListShortcuts(bool controller) {
+    const char* keys[] = {controller ? "View + X" : "F6", controller ? "View + Y" : "F10",
+                          controller ? "View + A" : "F8", controller ? "View + LB" : "PgUp",
+                          controller ? "View + RB" : "PgDn"};
+    const char* actions[] = {"切换模式", "全部/遗漏", "收起清单", "上一页", "下一页"};
+    float keyWidth = 0;
+    for (const char* key : keys) keyWidth = std::max(keyWidth, ImGui::CalcTextSize(key).x);
+    keyWidth += 8.0f;
+    if (ImGui::BeginTable("MapListShortcuts", 3, ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableSetupColumn("模式与上一页", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("筛选与下一页", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("收起清单", ImGuiTableColumnFlags_WidthStretch);
+        for (unsigned i = 0; i < 5; ++i) {
+            if (i % 3 == 0) ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            DrawShortcutHint(keys[i], actions[i], keyWidth);
+        }
+        ImGui::EndTable();
+    }
+}
+
+// 从完整地图目录测量路径列，而非按当前页或遗漏筛选测量，翻页时窗口因此保持稳定。
+// 计数列只保留列名和最大计数所需宽度；完整手柄快捷键与顶部统计决定清单的最小宽度。
+struct MapListLayout {
+    float windowWidth = 0;
+    float countWidth = 0;
+    float missingWidth = 0;
+    float nameWidth = 0;
+};
+static MapListLayout MeasureMapListLayout(bool controller) {
+    const auto textWidth = [](const char* text) { return ImGui::CalcTextSize(text).x; };
+    const auto& style = ImGui::GetStyle();
+    MapListLayout layout;
+    layout.countWidth = std::max(textWidth("继承记录"), textWidth("566 / 566"));
+    layout.missingWidth = std::max(textWidth("完成"), textWidth("566"));
+    float pathWidth = textWidth("大地图 / 地点");
+    for (const auto& map : kMaps) pathWidth = std::max(pathWidth, textWidth(map.path));
+    const float tableSpacing = style.CellPadding.x * 8;
+    const float statisticsWidth = layout.countWidth * 2 + layout.missingWidth + tableSpacing;
+    const float shortcutWidth = (textWidth(controller ? "View + RB" : "PgDn") + 8.0f +
+        std::max(textWidth("全部/遗漏"), textWidth("收起清单"))) * 3 + style.CellPadding.x * 6;
+    const float summaryWidth = textWidth("已完成 59 / 59 张地图    剩余未开 566 个") +
+        style.ItemSpacing.x * 3 + textWidth("第 59 / 59 页");
+    const float contentWidth = std::max({pathWidth + statisticsWidth + 8.0f, shortcutWidth, summaryWidth});
+    layout.windowWidth = std::min(contentWidth + style.WindowPadding.x * 2 + 4.0f,
+        std::min(1060.0f, ImGui::GetIO().DisplaySize.x - 32.0f));
+    // 与表格使用相同的统计列和内边距；视口受限时仍按真实剩余宽度计算路径换行行高。
+    layout.nameWidth = std::max(80.0f,
+        layout.windowWidth - style.WindowPadding.x * 2 - statisticsWidth - 8.0f);
+    return layout;
+}
+
 static void DrawMapList(const Counts& counts, float left) {
     if (!g_mapList) return;
     const auto mode = g_mode.load();
     const auto display = ImGui::GetIO().DisplaySize;
     const bool controller = UsingController();
-    const float width = std::min(1060.0f, display.x - 32.0f);
+    const auto layout = MeasureMapListLayout(controller);
+    const float width = layout.windowWidth;
     // 完整路径在窄窗口自动换行；按最长路径预留行高，使翻页容量不会随当前页抖动。
     const auto& style = ImGui::GetStyle();
-    const float nameWidth = std::max(80.0f, width - style.WindowPadding.x * 2 - 288.0f - style.CellPadding.x * 8 - 8);
     float rowHeight = ImGui::GetTextLineHeight();
     for (const auto& map : counts.maps)
-        rowHeight = std::max(rowHeight, ImGui::CalcTextSize(map.definition->path, nullptr, false, nameWidth).y);
+        rowHeight = std::max(rowHeight, ImGui::CalcTextSize(map.definition->path, nullptr, false, layout.nameWidth).y);
     rowHeight += style.CellPadding.y * 2;
-    // 标题、筛选说明和页脚预留固定高度；小窗口减少行数，防止底部被裁切。
+    // 标题、筛选说明、两行快捷键及页脚说明预留固定高度；小窗口减少行数以免裁切。
     const auto rowsPerPage = static_cast<size_t>(std::max(1.0f,
         std::min(static_cast<float>(kRowsPerPage), (display.y - 320.0f) / rowHeight)));
     const auto visible = VisibleMaps(counts.maps, mode, g_missingOnly);
@@ -145,21 +306,29 @@ static void DrawMapList(const Counts& counts, float left) {
         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
     if (ImGui::Begin("Sky2MapProgress", nullptr, flags)) {
         ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "各地图宝箱收集");
-        ImGui::Text("%s · %s", mode == Mode::Current ? "当前周目" : "继承记录（多周目）",
+        ImGui::Text("%s · %s", mode == Mode::Current ? "本周目" : "继承记录（多周目）",
                     g_missingOnly ? "仅看有遗漏的地图" : "全部地图（有遗漏的在前）");
         if (!counts.valid) {
             ImGui::TextDisabled("等待游戏数据……");
         } else {
-            ImGui::Text("已完成 %u / %u 张地图    待收集 %u 个", static_cast<unsigned>(complete),
+            // 页码与已完成统计共用一行，右边缘对齐内容区；先保存行尾，避免文字提交改变游标。
+            // 宽度测量已为最长统计与页码留出间距；无游戏数据时不显示没有依据的页码。
+            const float rowRight = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+            ImGui::Text("已完成 %u / %u 张地图    剩余未开 %u 个", static_cast<unsigned>(complete),
                         static_cast<unsigned>(counts.maps.size()), 566 - collected);
+            const std::string pageText = "第 " + std::to_string(g_mapPage + 1) + " / " +
+                std::to_string(pages) + " 页";
+            ImGui::SameLine(0.0f, std::max(style.ItemSpacing.x,
+                rowRight - ImGui::GetItemRectMax().x - ImGui::CalcTextSize(pageText.c_str()).x));
+            ImGui::TextUnformatted(pageText.c_str());
             ImGui::Separator();
             if (visible.empty()) {
-                ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "当前统计口径下，全部地图已收集完成。");
+                ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "当前显示模式下，所有宝箱均已开。");
             } else if (ImGui::BeginTable("MapCounts", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
                 ImGui::TableSetupColumn("大地图 / 地点", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("本周目", ImGuiTableColumnFlags_WidthFixed, 104);
-                ImGui::TableSetupColumn("继承记录", ImGuiTableColumnFlags_WidthFixed, 104);
-                ImGui::TableSetupColumn("待收集", ImGuiTableColumnFlags_WidthFixed, 80);
+                ImGui::TableSetupColumn("本周目", ImGuiTableColumnFlags_WidthFixed, layout.countWidth);
+                ImGui::TableSetupColumn("继承记录", ImGuiTableColumnFlags_WidthFixed, layout.countWidth);
+                ImGui::TableSetupColumn("未开", ImGuiTableColumnFlags_WidthFixed, layout.missingWidth);
                 ImGui::TableHeadersRow();
                 const auto end = std::min(visible.size(), (g_mapPage + 1) * rowsPerPage);
                 for (size_t i = g_mapPage * rowsPerPage; i < end; ++i) {
@@ -180,14 +349,11 @@ static void DrawMapList(const Counts& counts, float left) {
                 }
                 ImGui::EndTable();
             }
-            ImGui::Separator();
-            ImGui::Text("第 %u / %u 页    %s 翻页", static_cast<unsigned>(g_mapPage + 1), static_cast<unsigned>(pages),
-                        controller ? "View + LB / RB" : "PgUp / PgDn");
         }
-        ImGui::TextDisabled("%s", controller ? "按住 View：X 切换口径 · Y 全部 / 遗漏 · A 收起清单" :
-                                               "F6 切换口径 · F10 全部 / 遗漏 · F8 收起清单");
+        ImGui::Separator();
+        DrawMapListShortcuts(controller);
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped("按大地图前缀定位；道路单列，迷宫含各楼层，也包含尚未到达的地点。");
+        ImGui::TextWrapped("计数：已开 / 总数；道路单列，迷宫含各楼层，包含未到达地点。");
         ImGui::PopStyleColor();
     }
     ImGui::End();
@@ -202,39 +368,37 @@ static void DrawPanel() {
     if (now - refreshed >= 250) { counts = ReadCounts(); refreshed = now; }
     const bool current = g_mode.load() == Mode::Current;
     const bool enabled = g_enabled.load();
+    const bool controller = UsingController();
+    const auto exploration = ReadExplorationStatus();
+    const auto shortcuts = MeasurePanelShortcutLayout(controller);
     ImGui::SetNextWindowPos(ImVec2(22, 22), ImGuiCond_Always);
+    // 输入热切换时同步更新测量宽度，键盘模式收窄后仍保留完整地区计数和探索状态。
+    ImGui::SetNextWindowSize(ImVec2(std::min(shortcuts.windowWidth,
+        ImGui::GetIO().DisplaySize.x - 44.0f), 0), ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.93f);
     constexpr auto flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
     float panelRight = 330;
     if (ImGui::Begin("Sky2ChestTracker", nullptr, flags)) {
-        ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "宝箱追踪  ·  0.3.3");
-        if (!enabled) ImGui::TextColored(ImVec4(1, 0.72f, 0.3f, 1), "地图修改已暂停（原版显示）");
-        else ImGui::Text("地图口径：%s", current ? "当前周目" : "继承记录（多周目）");
+        ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "宝箱追踪  ·  0.4.0");
+        if (!enabled) ImGui::TextColored(ImVec4(1, 0.72f, 0.3f, 1), "宝箱标记已暂停（原版显示）");
+        else ImGui::Text("显示模式：%s", current ? "本周目" : "继承记录（多周目）");
         ImGui::Separator();
         if (counts.valid) {
             ImGui::Text("本周目已开  %u / 566", counts.current);
             ImGui::Text("继承记录已开  %u / 566", counts.inherited);
             if (!counts.map.empty()) {
-                // 两组地区进度同时呈现，与上方全局计数保持一致；切换图标口径不隐藏其中一组。
+                // 两组地区进度同时呈现，与上方全局计数保持一致；切换显示模式不隐藏其中一组。
                 ImGui::Text("本周目当前地区已开  %u / %u", counts.map_current, counts.map_total);
                 ImGui::Text("继承记录当前地区已开  %u / %u", counts.map_inherited, counts.map_total);
                 ImGui::TextDisabled("地区统计包含相邻道路");
             } else ImGui::TextDisabled("打开区域地图后显示两组地区统计");
         } else ImGui::TextDisabled("等待游戏数据……");
         ImGui::Separator();
-        ImGui::Text("闭合箱标：未取    开启箱标：已取");
-        if (UsingController()) {
-            ImGui::TextDisabled("View + X 切换口径 · View + B 显隐");
-            ImGui::TextDisabled("View + RS 暂停 / 恢复地图修改");
-            ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "View + A 各地图收集情况");
-            ImGui::TextDisabled("%s", ControllerModifierHeld() ? "View 已按住，请按功能键" : "View = 双窗口键，按住后再组合");
-            ImGui::TextDisabled("RS = 按下右摇杆");
-        } else {
-            ImGui::TextDisabled("F6 切换口径 · F7 显隐 · F9 暂停");
-            ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "F8 各地图收集情况");
-            if (InputBridgeReady()) ImGui::TextDisabled("手柄：按住 View + A 打开清单");
-        }
+        ImGui::Text("闭合箱标：未开    开启箱标：已开");
+        DrawChestShortcuts(controller, shortcuts);
+        ImGui::Separator();
+        DrawExplorationStatus(exploration, controller, shortcuts);
         panelRight = ImGui::GetWindowPos().x + ImGui::GetWindowSize().x + 14;
     }
     ImGui::End();

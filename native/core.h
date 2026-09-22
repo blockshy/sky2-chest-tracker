@@ -1,4 +1,4 @@
-// 纯状态逻辑：与游戏地址、绘制 API 分离，方便验证当前周目与继承记录不会混用。
+// 纯状态逻辑：与游戏地址、绘制 API 分离，方便验证本周目与继承记录不会混用。
 #pragma once
 #include <cstddef>
 #include <cstdint>

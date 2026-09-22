@@ -1,4 +1,4 @@
-// 手柄组合键的纯状态机；不调用系统 API，也不依赖游戏对象，便于验证每种松键顺序。
+// 输入组合键的纯状态机；不调用系统 API，也不依赖游戏对象，便于验证松键与切后台行为。
 #pragma once
 #include <cstdint>
 #include <cstdlib>
@@ -6,7 +6,34 @@
 namespace tracker {
 enum InputAction : uint32_t {
     ToggleMode = 1u << 0, TogglePanel = 1u << 1, ToggleEnabled = 1u << 2,
-    ToggleList = 1u << 3, ToggleFilter = 1u << 4, PreviousPage = 1u << 5, NextPage = 1u << 6
+    ToggleList = 1u << 3, ToggleFilter = 1u << 4, PreviousPage = 1u << 5, NextPage = 1u << 6,
+    ToggleMapReveal = 1u << 7, ToggleTravelUnlock = 1u << 8
+};
+
+// bits 0～6 分别对应 F6、F7、F9、F8、F10、PgUp、PgDn，与既有动作位保持一致。
+// 只把物理功能键的新按下沿解释为操作；先按住 F6 再按 Ctrl 不应产生第二次切换。
+// 失焦或初始化时等待所有快捷键和 Ctrl 松开，避免 Alt+Tab 回游戏时把旧组合当成新指令。
+class KeyboardFilter {
+    uint32_t previous_ = 0;
+    bool rearm_ = true;
+public:
+    uint32_t Update(uint32_t down, bool control, bool foreground) noexcept {
+        constexpr uint32_t supported = (1u << 7) - 1;
+        down &= supported;
+        const uint32_t pressed = down & ~previous_;
+        previous_ = down;
+        if (!foreground) { rearm_ = true; return 0; }
+        if (rearm_) {
+            rearm_ = down != 0 || control;
+            return 0;
+        }
+        if (!control) return pressed;
+        // Ctrl 修饰两个探索功能时吞掉原 F6/F8 的 Mod 动作，其他既有快捷键保持原意。
+        uint32_t actions = pressed & ~(ToggleMode | ToggleList);
+        if (pressed & ToggleMode) actions |= ToggleMapReveal;
+        if (pressed & ToggleList) actions |= ToggleTravelUnlock;
+        return actions;
+    }
 };
 inline constexpr uint16_t kView = 0x0020;
 struct PadSample {
@@ -69,7 +96,9 @@ public:
             // Xbox 窗口的 View + Menu。此层只过滤游戏收到的状态，不能阻止系统独立监听组合键。
             const struct { uint16_t button; uint32_t action; } bindings[] = {
                 {0x1000, ToggleList}, {0x2000, TogglePanel}, {0x4000, ToggleMode}, {0x8000, ToggleFilter},
-                {0x0100, PreviousPage}, {0x0200, NextPage}, {0x0080, ToggleEnabled}
+                {0x0100, PreviousPage}, {0x0200, NextPage}, {0x0080, ToggleEnabled},
+                // 十字键上／下没有占用既有 Mod 组合；单独按方向键仍交给游戏。
+                {0x0001, ToggleMapReveal}, {0x0002, ToggleTravelUnlock}
             };
             for (const auto& binding : bindings) if (pressed & binding.button) result.actions |= binding.action;
             blocked_ |= static_cast<uint16_t>(raw.buttons & ~kView);

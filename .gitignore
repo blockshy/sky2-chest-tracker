@@ -21,6 +21,11 @@
 /.venv/
 __pycache__/
 *.pyc
+# IntelliJ IDEA 本机项目配置与模块文件；保留在本地，不纳入源码提交。
+.idea/
+*.iml
+*.ipr
+*.iws
 .vs/
 *.user
 *.suo

@@ -28,7 +28,8 @@ int main() {
 
     const struct { uint16_t button; uint32_t action; } bindings[] = {
         {0x1000, ToggleList}, {0x2000, TogglePanel}, {0x4000, ToggleMode}, {0x8000, ToggleFilter},
-        {0x0100, PreviousPage}, {0x0200, NextPage}, {0x0080, ToggleEnabled}
+        {0x0100, PreviousPage}, {0x0200, NextPage}, {0x0080, ToggleEnabled},
+        {0x0001, ToggleMapReveal}, {0x0002, ToggleTravelUnlock}
     };
     for (const auto& binding : bindings) {
         for (bool viewReleasedFirst : {false, true}) {
@@ -40,7 +41,7 @@ int main() {
             check(r.actions == binding.action && same(r.game, {}), "每个组合只触发对应动作，游戏收到中立状态");
             r = filter.Update(chord, true);
             check(r.actions == 0 && same(r.game, {}), "持续按住组合不重复触发");
-            // 两种松键顺序都不能把 A 或右摇杆按压残留给游戏，最终也不能再补发 View。
+            // 两种松键顺序都不能把 A、右摇杆或十字键残留给游戏，最终也不能再补发 View。
             r = filter.Update({viewReleasedFirst ? binding.button : kView}, true);
             check(r.actions == 0 && same(r.game, {}), "先松开任意一键均不泄漏组合输入");
             r = filter.Update({}, true);
@@ -66,6 +67,23 @@ int main() {
     pad.Update({kView}, true);
     check(pad.Update({static_cast<uint16_t>(kView | 0x0200)}, true).actions == NextPage,
           "可以一直按住 View 并逐次点按 RB 翻页");
+    // 新组合要保留普通十字键用途，也不能把预先按住的方向键误认为解锁指令。
+    for (uint16_t direction : {uint16_t{0x0001}, uint16_t{0x0002}}) {
+        pad.Reset(); pad.Update({}, true);
+        check(pad.Update({direction}, true).actions == 0, "单独十字键不切换探索辅助");
+        r = pad.Update({static_cast<uint16_t>(kView | direction)}, true);
+        check(!r.actions && !r.game.buttons, "先按方向键再按 View 不误触探索开关");
+        pad.Update({}, true);
+    }
+    pad.Reset(); pad.Update({}, true);
+    r = pad.Update({static_cast<uint16_t>(kView | 0x0001)}, true);
+    check(r.actions == ToggleMapReveal, "同帧按下 View 与上键只切换地图全显");
+    pad.Update({kView}, true);
+    r = pad.Update({static_cast<uint16_t>(kView | 0x0002)}, true);
+    check(r.actions == ToggleTravelUnlock, "保持 View 后改按下键只切换传送点");
+    pad.Update({}, true);
+    r = pad.Update({static_cast<uint16_t>(kView | 0x0080)}, true);
+    check(r.actions == ToggleEnabled, "探索组合后原 View + RS 仍仅暂停宝箱标记");
 
     // 组合期间吞掉扳机和方向键；先松 View 后仍握住扳机也不能突然攻击。
     pad.Reset(); pad.Update({}, true);
@@ -103,6 +121,40 @@ int main() {
     pad.Update({}, true);
     pad.Update({0, 29}, true);
     check(pad.Update({0, 31}, true).activity, "缓慢扣动扳机越过阈值可切换提示");
+
+    // 键盘与手柄使用同一组动作位，但 Ctrl 组合必须互斥于原 F6/F8 功能。
+    KeyboardFilter keyboard;
+    keyboard.Update(0, false, true);
+    check(keyboard.Update(ToggleMode, true, true) == ToggleMapReveal,
+          "Ctrl + F6 仅切换全显，不切换宝箱统计口径");
+    check(keyboard.Update(ToggleMode, true, true) == 0, "长按 Ctrl + F6 不重复触发");
+    check(keyboard.Update(ToggleMode, false, true) == 0, "先松 Ctrl 不泄漏一次原 F6 动作");
+    keyboard.Update(0, false, true);
+    check(keyboard.Update(ToggleMode, false, true) == ToggleMode, "松键后原 F6 功能恢复");
+    check(keyboard.Update(ToggleMode, true, true) == 0, "先按 F6 再按 Ctrl 不追加全显指令");
+    keyboard.Update(0, true, true);
+    check(keyboard.Update(ToggleList, true, true) == ToggleTravelUnlock,
+          "持续按住 Ctrl 再按 F8 仅切换传送点，不打开清单");
+    check(keyboard.Update(0, true, true) == 0, "先松 F8 不触发其他功能");
+    check(keyboard.Update(ToggleList, true, true) == ToggleTravelUnlock,
+          "持续按住 Ctrl 时再次点按 F8 可以关闭传送点辅助");
+    keyboard.Update(0, false, true);
+    check(keyboard.Update(ToggleList, false, true) == ToggleList, "单独 F8 保留原清单功能");
+    keyboard.Update(0, false, true);
+    check(keyboard.Update(ToggleEnabled, true, true) == ToggleEnabled,
+          "Ctrl 不改变 F9 的宝箱暂停功能，也不影响探索开关");
+    // 后台采样必须丢弃动作；按住组合切回来也不会触发，直到全部松开再重新按下。
+    check(keyboard.Update(ToggleList, true, false) == 0, "后台 Ctrl + F8 不触发传送辅助");
+    check(keyboard.Update(ToggleList, true, true) == 0, "按住组合切回前台不误触");
+    keyboard.Update(0, true, true);
+    check(keyboard.Update(ToggleMode, true, true) == 0, "切回后未松 Ctrl 仍等待重新就绪");
+    keyboard.Update(0, false, true);
+    check(keyboard.Update(ToggleMode, true, true) == ToggleMapReveal, "全部松开后探索快捷键恢复");
+    KeyboardFilter initializing;
+    check(initializing.Update(ToggleMode, true, true) == 0, "加载 Mod 时已按住的组合不会误触");
+    initializing.Update(0, false, true);
+    check(initializing.Update(ToggleMode | ToggleList, true, true) == (ToggleMapReveal | ToggleTravelUnlock),
+          "同时点按两个探索快捷键时只产生对应探索动作");
     std::printf("%u controller failure(s)\n", failures);
     return failures ? 1 : 0;
 }
