@@ -35,6 +35,14 @@ Copy-Item -LiteralPath $dll -Destination (Join-Path $stageDist 'xinput1_4.dll')
 foreach ($file in @('README.md', 'Install-Mod.ps1', 'Uninstall-Mod.ps1')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot $file) -Destination (Join-Path $stage $file)
 }
+# 玩家可在解压包内离线查看安装、操作和传送用法；只收白名单中的三份玩家指南。
+# 不附带开发过程、构建说明或验证记录，防止安装包再次混入与玩家操作无关的文档。
+# 指南位于 dist 之外，安装器不会把它复制进游戏目录，手动安装仍只需复制 dist 内容。
+$guideDirectory = Join-Path $stage 'docs'
+New-Item -ItemType Directory -Path $guideDirectory -Force | Out-Null
+foreach ($guide in @('INSTALLATION.md', 'USAGE.md', 'TRAVEL.md')) {
+    Copy-Item -LiteralPath (Join-Path $projectRoot ('docs/' + $guide)) -Destination (Join-Path $guideDirectory $guide)
+}
 # 手动安装只需复制 dist 中的 DLL 和同名 Mod 文件夹。模板记录与该 DLL 绑定，
 # 以后改用脚本仍可核对归属；不预填虚假的安装时间，也不包含本机路径。
 $stageMod = Join-Path $stageDist 'Sky2ChestTracker'

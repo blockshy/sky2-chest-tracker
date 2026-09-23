@@ -9,7 +9,10 @@ param(
     [Parameter(Mandatory = $true)][string]$GamePath,
     [string]$PythonExecutable = 'python',
     [string]$BuildDirectory,
-    [string]$DependencyDirectory
+    [string]$DependencyDirectory,
+    # 正式默认构建显式写入 ON，不继承旧构建目录的 OFF 缓存；开发对照时才指定
+    # 此参数构建剧情限制策略。两种策略均运行各自独立的自动回归目标。
+    [switch]$StoryRestrictedTravel
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
@@ -32,7 +35,10 @@ $catalog = Join-Path $projectRoot 'data/generated'
 if ($LASTEXITCODE -ne 0) { throw '宝箱目录生成失败。' }
 & $pythonCommand (Join-Path $PSScriptRoot 'extract_map_catalog.py') --game $gameRoot --catalog (Join-Path $catalog 'chests.json') --out $catalog
 if ($LASTEXITCODE -ne 0) { throw '地图目录生成失败。' }
-& cmake -S $projectRoot -B $BuildDirectory -G 'NMake Makefiles' '-DCMAKE_BUILD_TYPE=Release' '-DSKY2_BUILD_MOD=ON' '-DBUILD_TESTING=ON' "-DSKY2_DEPS_DIR=$dependencyRoot" "-DCMAKE_MAKE_PROGRAM=$makeExecutable"
+& $pythonCommand (Join-Path $PSScriptRoot 'extract_travel_catalog.py') --game $gameRoot --out $catalog
+if ($LASTEXITCODE -ne 0) { throw '传送目录生成失败。' }
+$travelPolicy = if ($StoryRestrictedTravel) { 'OFF' } else { 'ON' }
+& cmake -S $projectRoot -B $BuildDirectory -G 'NMake Makefiles' '-DCMAKE_BUILD_TYPE=Release' '-DSKY2_BUILD_MOD=ON' '-DBUILD_TESTING=ON' "-DSKY2_UNRESTRICTED_TRAVEL=$travelPolicy" "-DSKY2_DEPS_DIR=$dependencyRoot" "-DCMAKE_MAKE_PROGRAM=$makeExecutable"
 if ($LASTEXITCODE -ne 0) { throw 'CMake 配置失败。' }
 # 发布始终清理旧对象，防止头文件依赖扫描或开发缓存导致源码与二进制不一致。
 & cmake --build $BuildDirectory --clean-first

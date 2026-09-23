@@ -3,6 +3,8 @@
 #include "tracker.h"
 #include "input_bridge.h"
 #include "exploration.h"
+#include "revisit.h"
+#include "revisit_policy.h"
 #include "ui_scale.h"
 #include <d3d11.h>
 #include <dxgi.h>
@@ -11,7 +13,8 @@
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
 #include <mutex>
-
+#include <cstring>
+#include <ctime>
 namespace tracker {
 using PresentFn = HRESULT(WINAPI*)(IDXGISwapChain*, UINT, UINT);
 static PresentFn g_originalPresent = nullptr;
@@ -25,16 +28,103 @@ static bool g_mapList = false;
 static bool g_missingOnly = true;
 static size_t g_mapPage = 0;
 static constexpr size_t kRowsPerPage = 12;
+// 回访界面仍只接收既有过滤层派发的组合键，不抢占游戏鼠标或单独 A/B 按键。
+static bool g_revisitWindow = false;
+static size_t g_revisitSelection = 0;
+// 导航位置只保存在本次进程内：关闭窗口、隐藏主面板及切换清单均不重置。
+// 单独记录首次打开，避免每次恢复窗口都覆盖玩家选中的目的地；不持久化到存档。
+static bool g_revisitSelectionInitialized = false;
+static RevisitConfirmation g_revisitConfirmation;
+static RevisitNativeContext g_revisitConfirmContext{};
+static uint64_t g_revisitRequestToken = 0;
+static bool g_revisitSubmissionRejected = false;
+
+static bool RevisitCanSubmit(const RevisitNativeContext& context) {
+    const auto phase = ReadRevisitNativeStatus().phase;
+    return RevisitReady() && context.available && RevisitContextAllowed(context) &&
+        context.browsing && !context.busy &&
+        phase != RevisitNativePhase::Queued && phase != RevisitNativePhase::ClosingMap &&
+        phase != RevisitNativePhase::Dispatched;
+}
+static void CancelRevisitConfirmation() {
+    g_revisitConfirmation.Cancel();
+    CancelRevisitNativeTravel();
+    g_revisitSubmissionRejected = false;
+}
+
+// 确认绑定到本次只读场景和进度快照。加载其他存档、转场、退出原生地图都会解除确认；
+// 原生线程还会用新的上下文复核，不能把这里的异步快照当成传送许可。
+static void UpdateRevisitConfirmation() {
+    const auto context = ReadRevisitNativeContext();
+    if (!g_revisitWindow || !RevisitCanSubmit(context) ||
+        context.chapter != g_revisitConfirmContext.chapter ||
+        context.browseIdentity != g_revisitConfirmContext.browseIdentity ||
+        context.progressSignature != g_revisitConfirmContext.progressSignature ||
+        std::strcmp(context.scene, g_revisitConfirmContext.scene) != 0)
+        g_revisitConfirmation.Cancel();
+}
 
 // 两种输入来源共用相同的动作处理，确保显示模式切换、筛选和分页行为完全一致。
 static void ApplyActions(uint32_t actions) {
+    if (actions & ToggleRevisit) {
+        g_revisitWindow = !g_revisitWindow;
+        CancelRevisitConfirmation();
+        if (g_revisitWindow) {
+            g_panel.store(true);
+            g_mapList = false;
+            // 本次进程首次打开时仍优先帮助旧地图存档寻找返程；之后恢复原选中项与页码。
+            // 这里只记住浏览位置，关闭窗口时上方仍取消二次确认，不保留传送授权。
+            if (!g_revisitSelectionInitialized) {
+                g_revisitSelection = RevisitRecoveryRequired(ReadRevisitNativeContext()) ? RevisitDestinationCount() - 1 : 0;
+                g_revisitSelectionInitialized = true;
+            }
+        }
+    }
+    if (g_revisitWindow) {
+        const auto pageActions=actions & (PreviousPage | NextPage);
+        if (pageActions) {
+            CancelRevisitConfirmation();
+            // 与宝箱清单共用PgUp/PgDn及View+LB/RB翻页。相反方向同帧按下不移动，
+            // 整页操作优先于逐项，避免肩键与扳机同时输入时意外多移动一项。
+            if (pageActions==PreviousPage || pageActions==NextPage)
+                g_revisitSelection=RevisitPageSelection(g_revisitSelection,pageActions==NextPage);
+        } else if (const auto itemActions=actions & (PreviousTravelItem | NextTravelItem)) {
+            CancelRevisitConfirmation();
+            if (itemActions==PreviousTravelItem)
+                g_revisitSelection = (g_revisitSelection + RevisitDestinationCount() - 1) % RevisitDestinationCount();
+            if (itemActions==NextTravelItem) g_revisitSelection = (g_revisitSelection + 1) % RevisitDestinationCount();
+        }
+        if ((actions & ToggleFilter) && RevisitDestinationAt(g_revisitSelection).id == kRevisitReturnTarget) {
+            CancelRevisitConfirmation();
+            CycleRevisitReturnRecord(ReadRevisitNativeContext());
+        }
+        if (actions & ConfirmRevisit) {
+            const auto context = ReadRevisitNativeContext();
+            const auto target = RevisitDestinationAt(g_revisitSelection).id;
+            if (RevisitCanSubmit(context) && RevisitTargetAllowed(target, context)) {
+                if (g_revisitConfirmation.Press(target, GetTickCount64())) {
+                    g_revisitSubmissionRejected = !QueueRevisitTravel(target, ++g_revisitRequestToken, context);
+                    if (g_revisitSubmissionRejected) Log("Revisit: UI request rejected before queue; inspect return-point and context diagnostics.");
+                } else {
+                    g_revisitConfirmContext = context;
+                    g_revisitSubmissionRejected = false;
+                }
+            }
+        }
+        // 翻页在两张清单中含义相同，但只交给当前传送窗口，不能同时改宝箱页码。
+        // 逐项动作只用于此窗口；关闭后不把Ctrl/扳机组合重新解释成宝箱翻页。
+        actions &= ~(PreviousPage | NextPage | ToggleFilter | PreviousTravelItem | NextTravelItem);
+    }
     if (actions & ToggleMode) {
         const bool current = g_mode.load() == Mode::Current;
         g_mode.store(current ? Mode::Inherited : Mode::Current);
         g_mapPage = 0;
         Log(current ? "View changed: inherited." : "View changed: current playthrough.");
     }
-    if (actions & TogglePanel) g_panel.store(!g_panel.load());
+    if (actions & TogglePanel) {
+        g_panel.store(!g_panel.load());
+        if (!g_panel.load()) { g_revisitWindow = false; CancelRevisitConfirmation(); }
+    }
     if (actions & ToggleEnabled) {
         g_enabled.store(!g_enabled.load());
         Log(g_enabled.load() ? "Chest markers resumed." : "Chest markers paused.");
@@ -44,6 +134,8 @@ static void ApplyActions(uint32_t actions) {
     if (actions & ToggleMapReveal) ToggleExploration(ExplorationFeature::MapReveal);
     if (actions & ToggleTravelUnlock) ToggleExploration(ExplorationFeature::TravelUnlock);
     if (actions & ToggleList) {
+        g_revisitWindow = false;
+        CancelRevisitConfirmation();
         g_mapList = !g_panel.load() || !g_mapList;
         if (g_mapList) g_panel.store(true);
         Log(g_mapList ? "Map progress list opened." : "Map progress list closed.");
@@ -68,7 +160,9 @@ static void HandleKeys() {
     }
     const bool control = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
     actions |= keyboard.Update(down, control, foreground);
+    UpdateRevisitConfirmation();
     if (foreground) ApplyActions(actions);
+    else CancelRevisitConfirmation();
 }
 
 static bool InitializeGui(IDXGISwapChain* swap) {
@@ -144,7 +238,7 @@ static PanelShortcutLayout MeasurePanelShortcutLayout(bool controller) {
     float contentWidth = layout.leftWidth + rightWidth + style.CellPadding.x * 4;
     for (const char* text : {"显示模式：继承记录（多周目）", "宝箱标记已暂停（原版显示）",
                             "继承记录当前地区已开  566 / 566", "打开区域地图后显示两组地区统计",
-                            "闭合箱标：未开    开启箱标：已开"})
+                            "闭合箱标：未开    开启箱标：已开", "宝箱追踪  ·  0.5.0"})
         contentWidth = std::max(contentWidth, textWidth(text));
     if (controller)
         contentWidth = std::max(contentWidth, textWidth("View：双窗口键；RS：按下右摇杆"));
@@ -210,10 +304,16 @@ static void DrawExplorationStatus(const ExplorationStatus& exploration, bool con
             controller ? "View + 十字键上" : "Ctrl + F6");
         row("未到访传送点", exploration.travelAvailable, exploration.travelEnabled,
             exploration.travelPending, exploration.travelRequested, controller ? "View + 十字键下" : "Ctrl + F8");
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted("全传送清单");
+        ImGui::TableNextColumn();
+        ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "%s",
+            controller ? "View + 十字键左" : "Ctrl + F10");
         ImGui::EndTable();
     }
     // 底部只有一个提示槽：故障优先，其次等待，正常时才显示简短功能边界。
-    // 完整范围和测试说明保留在文档中，不在每帧面板反复展开三到四段文字。
+    // 完整功能范围和使用说明保留在文档中，不在每帧面板反复展开三到四段文字。
     const char* note = !exploration.mapAvailable || !exploration.travelAvailable ?
         "功能校验未通过，详见 tracker.log。" : exploration.travelPending ?
         "等待刷新：打开地图或结束确认/转场。" : "重启关闭；传送可能越过入口剧情。";
@@ -297,7 +397,9 @@ static void DrawMapList(const Counts& counts, float left) {
     const auto complete = std::count_if(counts.maps.begin(), counts.maps.end(),
         [&](const auto& map) { return map.Remaining(mode) == 0; });
     const auto pages = std::max<size_t>(1, (visible.size() + rowsPerPage - 1) / rowsPerPage);
-    g_mapPage = std::min(g_mapPage, pages - 1);
+    // 换图或暂时读不到数据时，空快照不能代表清单已缩到一页，需保留上次浏览位置。
+    // 有效数据恢复后再按真实页数截断，兼顾开箱后遗漏地图减少及窗口尺寸变化。
+    if (counts.valid) g_mapPage = std::min(g_mapPage, pages - 1);
     // 窄窗口时允许清单覆盖主面板的一部分，始终让整张清单位于视口内。
     const float x = std::max(16.0f, std::min(left, display.x - width - 16.0f));
     ImGui::SetNextWindowPos(ImVec2(x, 22), ImGuiCond_Always);
@@ -359,6 +461,127 @@ static void DrawMapList(const Counts& counts, float left) {
     ImGui::End();
 }
 
+// 回访清单与地图收集清单互斥显示，沿用按键高亮和设备热切换风格。
+// 明确区分“请求已提交”和“已经到达”，不会把关图阶段冒充传送成功。
+// 出发点优先使用现有宝箱目录中的地区/地点名称；没有宝箱的城镇场景采用地区名
+// 加场景编号作补充识别。记录时间用于手动区分历史行程，不能冒充存档槽位标识。
+static const char* ReturnPointName(const RevisitReturnPoint& point) {
+    for (const auto& map : kMaps) if (std::strcmp(map.scene, point.scene)==0) return map.path;
+    switch (point.region) {
+    case 1: return "洛连特地区";
+    case 2: return "柏斯地区";
+    case 3: return "卢安地区";
+    case 4: return "蔡斯地区";
+    case 5: return "格兰赛尔地区";
+    case 7: return "利贝尔方舟";
+    default: return "记录地点";
+    }
+}
+static void DrawRevisitWindow(float left, bool controller) {
+    if (!g_revisitWindow) return;
+    const auto context = ReadRevisitNativeContext();
+    const auto status = ReadRevisitNativeStatus();
+    const auto returnStatus = ReadRevisitReturnStatus(context);
+    const auto& destination = RevisitDestinationAt(g_revisitSelection);
+    const float width = std::min(640.0f, ImGui::GetIO().DisplaySize.x - 32.0f);
+    const float x = std::max(16.0f, std::min(left, ImGui::GetIO().DisplaySize.x - width - 16.0f));
+    ImGui::SetNextWindowPos(ImVec2(x, 22), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(width, 0), ImGuiCond_Always);
+    constexpr auto flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
+    if (ImGui::Begin("Sky2Revisit", nullptr, flags)) {
+        const ImVec4 accent(0.5f, 0.91f, 0.8f, 1);
+        ImGui::TextColored(accent, "全传送清单");
+        ImGui::TextUnformatted(revisit_policy::kUnrestricted ?
+            "传送保留最初出发点。" : "按当前剧情开放；传送保留最初出发点。");
+        constexpr size_t rows=kRevisitRowsPerPage;
+        const size_t page=g_revisitSelection/rows;
+        char pages[48]{};
+        std::snprintf(pages,sizeof(pages),"第 %zu / %zu 页",page+1,(RevisitDestinationCount()+rows-1)/rows);
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX(),width-ImGui::GetStyle().WindowPadding.x-ImGui::CalcTextSize(pages).x));
+        ImGui::TextUnformatted(pages);
+        ImGui::Separator();
+        for (size_t i=page*rows; i<std::min((page+1)*rows,RevisitDestinationCount()); ++i) {
+            const auto& row=RevisitDestinationAt(i);
+            const bool selected=i==g_revisitSelection;
+            const bool allowed=RevisitTargetAllowed(row.id,context);
+            ImGui::PushStyleColor(ImGuiCol_Text,selected ? accent :
+                ImGui::GetStyleColorVec4(allowed ? ImGuiCol_Text : ImGuiCol_TextDisabled));
+            ImGui::Text("%s %s / %s",selected ? ">" : " ",row.group,row.name);
+            ImGui::PopStyleColor();
+        }
+        ImGui::Separator();
+        if (destination.id==108)
+            ImGui::TextWrapped("克雷德尔居住区：传送后可步行进入市政府，补取遗漏宝箱。");
+        if (destination.id==forest::kTarget)
+            ImGui::TextWrapped("迷途之森没有普通出口；请使用记录的出发点返程。");
+        if (returnStatus.hasRecord) {
+            const auto& record=returnStatus.record;
+            const time_t stamp=static_cast<time_t>(record.createdUnixSeconds);
+            tm local{}; char date[48]{};
+            if (localtime_s(&local,&stamp)==0) std::strftime(date,sizeof(date),"%m-%d %H:%M:%S",&local);
+            ImGui::TextWrapped("%s：%s",returnStatus.active ? "最初出发点" : "历史返程候选",ReturnPointName(record.point));
+            ImGui::TextDisabled("%s  ·  %s  ·  记录 %zu / %zu",record.point.scene,date,returnStatus.index+1,returnStatus.count);
+        } else ImGui::TextDisabled("首次出发前自动记录场景、站立坐标与朝向。");
+        const char* message = nullptr;
+        if (!RevisitReady() || !context.available) message = "回访保护或原生入口校验未通过，暂不可用。";
+        else if (status.phase == RevisitNativePhase::Queued) message = "请求已提交，等待原生地图线程核对……";
+        else if (status.phase == RevisitNativePhase::ClosingMap) message = "原生地图正在关闭，等待换图……";
+        else if (status.phase == RevisitNativePhase::Dispatched) message = "正在换图，等待实际到达确认……";
+        else if (!context.valid) message = "等待游戏场景数据……";
+        else if (!RevisitContextAllowed(context)) message = "当前场景或章节数据尚未支持。";
+        else if (!context.browsing || context.busy) message = "请打开游戏地图，退出子窗口并等待地图动画结束。";
+        else if (!RevisitTargetAllowed(destination.id,context)) {
+            if (destination.id==kRevisitReturnTarget)
+                message=returnStatus.hasRecord ? (revisit_policy::kUnrestricted ?
+                    "返程地点数据尚未通过校验，请核对所选记录。" :
+                    "当前剧情暂不允许返回此地点，请先完成游戏原生传送剧情。") :
+                    "没有本章节的返程记录；请读取正常地区存档后出发。";
+
+            else if (!returnStatus.storageReady) message="返程记录无法安全保存，本次出发已阻止。";
+            else if (RevisitRecoveryRequired(context) && !returnStatus.active) message="重启或读档后，请先选择历史返程点返回，再开始新回访。";
+            else if (!revisit_policy::kUnrestricted && context.beforeScriptReturnBlocked && !returnStatus.active)
+                message="当前传送由剧情接管，请先使用游戏原生传送继续剧情。";
+            else if (!context.returnPointReady && !returnStatus.active)
+                message="当前站位尚无法安全记录，暂不能传送。";
+            else message=RevisitNativeTargetReason(destination.id,context);
+        } else if (g_revisitConfirmation.Armed(destination.id, GetTickCount64()))
+            message = destination.id==kRevisitReturnTarget ?
+                "核对上方地点和时间，再按一次确认返程；记录不绑定存档槽位。" : "再次按确认组合键前往所选地点（8 秒内有效）。";
+        else if (status.phase == RevisitNativePhase::ArrivalUnconfirmed)
+            message = "上次到达未能自动确认，出发点已保留；现在可重新选择传送或返程。";
+        else if (g_revisitSubmissionRejected || status.phase == RevisitNativePhase::Rejected || status.phase == RevisitNativePhase::Expired)
+            message = "上次请求未确认成功；原返程记录保留，请重新打开地图核对。";
+        else message = "就绪，请选择目的地。";
+        ImGui::TextWrapped("%s", message);
+        // 两列按操作配对：上一页/下一页、上一项/下一项、确认/收起。
+        // 各列独立测量完整组合键，既保留高亮与热切换，又避免最长手柄文字挤到相邻列。
+        const char* revisitKeys[] = {controller ? "View + LB" : "PgUp",
+            controller ? "View + RB" : "PgDn", controller ? "View + LT" : "Ctrl + PgUp",
+            controller ? "View + RT" : "Ctrl + PgDn", controller ? "View + 十字键右" : "Ctrl + F7",
+            controller ? "View + 十字键左" : "Ctrl + F10", controller ? "View + Y" : "F10"};
+        const char* revisitActions[] = {"上一页", "下一页", "上一项", "下一项", "确认", "收起清单", "切换返程记录"};
+        const unsigned shortcutCount = destination.id==kRevisitReturnTarget && !returnStatus.active && returnStatus.count>1 ? 7 : 6;
+        float keyWidths[2]{};
+        for (unsigned i=0;i<shortcutCount;++i)
+            keyWidths[i%2] = std::max(keyWidths[i%2], ImGui::CalcTextSize(revisitKeys[i]).x + 12.0f);
+        if (ImGui::BeginTable("RevisitShortcuts", 2, ImGuiTableFlags_SizingStretchSame)) {
+            ImGui::TableSetupColumn("上一页与确认", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("下一页与收起", ImGuiTableColumnFlags_WidthStretch);
+            for (unsigned i=0;i<shortcutCount;++i) {
+                if (i%2==0) ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                DrawShortcutHint(revisitKeys[i], revisitActions[i], keyWidths[i%2]);
+            }
+            ImGui::EndTable();
+        }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("打开游戏地图，选好地点后确认两次；末页可返程。");
+        ImGui::PopStyleColor();
+    }
+    ImGui::End();
+}
+
 static void DrawPanel() {
     if (!g_panel.load()) return;
     // 统计每 250 毫秒刷新；地图图标本身在原生调用时即时读取标志。
@@ -380,7 +603,7 @@ static void DrawPanel() {
         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
     float panelRight = 330;
     if (ImGui::Begin("Sky2ChestTracker", nullptr, flags)) {
-        ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "宝箱追踪  ·  0.4.0");
+        ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "宝箱追踪  ·  0.5.0");
         if (!enabled) ImGui::TextColored(ImVec4(1, 0.72f, 0.3f, 1), "宝箱标记已暂停（原版显示）");
         else ImGui::Text("显示模式：%s", current ? "本周目" : "继承记录（多周目）");
         ImGui::Separator();
@@ -403,6 +626,7 @@ static void DrawPanel() {
     }
     ImGui::End();
     DrawMapList(counts, panelRight);
+    DrawRevisitWindow(panelRight, controller);
 }
 
 static HRESULT WINAPI Present(IDXGISwapChain* swap, UINT interval, UINT options) {

@@ -10,6 +10,9 @@
 namespace tracker {
 // 日志输出不属于本测试范围；保留生产 helper 的真实调用路径，仅替换日志落盘端点。
 void Log(const char*) noexcept {}
+// 本文件只测试探索列表刷新；回访的真实生产路径由单独的运行时测试覆盖。
+bool BeforeRevisitNativeBrowse(uintptr_t) noexcept { return false; }
+void ObserveRevisitNativeRules(uintptr_t) noexcept {}
 }
 
 namespace {

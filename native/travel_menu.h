@@ -436,6 +436,9 @@ extern "C" bool Sky2BeforeMapRefresh(uintptr_t menu) noexcept {
         g_travelClosePending = !RequestNativeMapClose(menu);
         return true;
     }
+    // 回访成功提交后须跳过本帧旧菜单输入；不与同帧的目的地列表重建交叉执行。
+    // 原生关闭失败的恢复分支优先，避免接管已经处于故障收尾中的菜单。
+    if (BeforeRevisitNativeBrowse(menu)) return true;
     if (!g_travelAvailable.load(std::memory_order_relaxed) || !g_travelRefresh.ReadStatus().pending) return false;
     TravelMenuContext context{};
     if (!ReadTravelMenu(menu, context)) return false;

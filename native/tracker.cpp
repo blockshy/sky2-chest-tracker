@@ -3,6 +3,8 @@
 #include "tracker.h"
 #include "input_bridge.h"
 #include "exploration.h"
+#include "revisit.h"
+#include "revisit_policy.h"
 #include "chest_catalog.h"
 #include <bcrypt.h>
 #include <MinHook.h>
@@ -192,6 +194,7 @@ static DWORD WINAPI Initialize(void*) noexcept {
         // 输入接入失败时保留键盘操作与地图功能，并在日志中说明，不扩大挂钩范围。
         if (!InstallInputBridge(g_base)) Log("Controller shortcuts unavailable; keyboard remains active.");
         InstallExploration(g_base);
+        InstallRevisit(g_base, g_folder);
         // 正式地图使用此表驱动函数；同时保留下方对象虚表挂钩，覆盖按对象取图标的路径。
         auto mapFunction = reinterpret_cast<void*>(g_base + 0x3DD0E0);
         const unsigned char mapExpected[] = {0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x6C,0x24,0x10};
@@ -210,7 +213,9 @@ static DWORD WINAPI Initialize(void*) noexcept {
         InterlockedExchangePointer(slot, reinterpret_cast<void*>(&SelectIcon));
         DWORD unused = 0;
         VirtualProtect(slot, sizeof(void*), protection, &unused);
-        Log("Sky2ChestTracker 0.4.0 active: chest tracking, map reveal, native travel rules with live refresh.");
+        Log(revisit_policy::kUnrestricted ?
+            "Sky2ChestTracker 0.5.0 active: chest tracking, exploration and full travel." :
+            "Sky2ChestTracker 0.5.0 active: chest tracking, exploration and story-restricted travel.");
     } catch (...) { Log("Initialization failed; exception contained."); }
     return 0;
 }

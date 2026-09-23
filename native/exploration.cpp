@@ -1,6 +1,7 @@
 // 探索辅助：仅调整原生地图显示和运行时传送菜单；绝不批量写入存档／剧情旗标。
 // 地址、结构和调用约定仅适用于已验证完整 SHA-256 的当前游戏构建。
 #include "exploration.h"
+#include "revisit_native.h"
 #include "exploration_logic.h"
 #include "travel_refresh.h"
 #include "tracker.h"
@@ -144,8 +145,11 @@ extern "C" bool Sky2BeforeBuildTravel(uintptr_t manager, uintptr_t caller) noexc
     // 只接受已核对的三处原生调用，或完整实时刷新在同线程同步Build期间授予的许可。
     const bool afterStateScript = caller == g_explorationBase + 0x3DAA88 ||
         caller == g_explorationBase + 0x3DB001 || caller == g_explorationBase + 0x3DB3AA;
-    if ((!afterStateScript && !g_travelExplicitBuild) ||
-        !g_travelUnlock.load(std::memory_order_relaxed)) return false;
+    if (!afterStateScript && !g_travelExplicitBuild) return false;
+    // 全传送清单只观察游戏已经执行完成的规则，不为探测目的重跑有副作用的脚本。
+    // 即使玩家关闭“未到访传送点”的地图补显开关，清单仍需准确读取原生禁用状态。
+    ObserveRevisitNativeRules(manager);
+    if (!g_travelUnlock.load(std::memory_order_relaxed)) return false;
     NativeTravelSnapshot snapshot{};
     NativeTravelTables tables{};
     if (!ReadNativeTravelSnapshot(manager, snapshot) || !ReadTravelTables(tables)) return false;

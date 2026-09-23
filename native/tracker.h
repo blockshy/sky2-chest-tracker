@@ -6,6 +6,7 @@
 #include <string>
 #include "core.h"
 #include "progress.h"
+#include "log.h"
 
 namespace tracker {
 extern HMODULE g_module;
@@ -27,7 +28,6 @@ struct Counts {
 
 // 排入工作线程；不在 DLL 加载锁内等待或创建图形设备。
 void Start() noexcept;
-void Log(const char* message) noexcept;
 Counts ReadCounts();
 bool InstallOverlay();
 }

@@ -29,7 +29,8 @@ int main() {
     const struct { uint16_t button; uint32_t action; } bindings[] = {
         {0x1000, ToggleList}, {0x2000, TogglePanel}, {0x4000, ToggleMode}, {0x8000, ToggleFilter},
         {0x0100, PreviousPage}, {0x0200, NextPage}, {0x0080, ToggleEnabled},
-        {0x0001, ToggleMapReveal}, {0x0002, ToggleTravelUnlock}
+        {0x0001, ToggleMapReveal}, {0x0002, ToggleTravelUnlock},
+        {0x0004, ToggleRevisit}, {0x0008, ConfirmRevisit}
     };
     for (const auto& binding : bindings) {
         for (bool viewReleasedFirst : {false, true}) {
@@ -85,6 +86,52 @@ int main() {
     r = pad.Update({static_cast<uint16_t>(kView | 0x0080)}, true);
     check(r.actions == ToggleEnabled, "探索组合后原 View + RS 仍仅暂停宝箱标记");
 
+    // 传送逐项选择只响应扳机的新按下沿；统一翻页由View+LB/RB承担。
+    // 改变动作名称不能放松组合过滤或释放区，避免游戏误响应及一次跳过多项。
+    for (bool right : {false,true}) {
+        pad.Reset();pad.Update({},true);pad.Update({kView},true);
+        PadSample trigger{kView};
+        (right ? trigger.rightTrigger : trigger.leftTrigger)=200;
+        r=pad.Update(trigger,true);
+        check(r.actions==(right ? NextTravelItem : PreviousTravelItem) && same(r.game,{}),
+              "View加扳机只提交对应逐项选择动作，游戏收到中立输入");
+        check(!pad.Update(trigger,true).actions,"长按逐项选择组合不连续跳转");
+        trigger.buttons=0;
+        check(same(pad.Update(trigger,true).game,{}),"先松View不泄漏仍按住的扳机");
+        pad.Update({},true);
+        pad.Update(trigger,true);
+        trigger.buttons=kView;
+        check(!pad.Update(trigger,true).actions,"先按扳机再按View不追加逐项选择");
+
+        // 同一次轻压跨过旧阈值多次，只能有一次按下；回到释放区后才能再次选择一项。
+        pad.Reset();pad.Update({},true);trigger={kView};
+        auto& value=right ? trigger.rightTrigger : trigger.leftTrigger;
+        value=31;
+        check(pad.Update(trigger,true).actions==(right ? NextTravelItem : PreviousTravelItem),"扳机首次按下仅选择一项");
+        for (uint8_t sample : {uint8_t{29},uint8_t{31},uint8_t{16},uint8_t{32},uint8_t{200}}) {
+            value=sample;
+            check(!pad.Update(trigger,true).actions,"扳机未回释放区时阈值抖动不重复选择");
+        }
+        trigger.buttons=0;value=29;
+        check(same(pad.Update(trigger,true).game,{}),"先松View后轻压扳机仍不会泄漏组合尾部");
+        trigger.buttons=kView;value=15;pad.Update(trigger,true);value=31;
+        check(pad.Update(trigger,true).actions==(right ? NextTravelItem : PreviousTravelItem),"完全释放后重新按下可再次选择一项");
+        pad.Reset();pad.Update({},true);trigger.buttons=0;value=31;pad.Update(trigger,true);
+        trigger.buttons=kView;value=29;pad.Update(trigger,true);value=31;
+        check(!pad.Update(trigger,true).actions,"预持扳机在阈值附近抖动后加View仍不误触");
+        // 与数字按键一致，带着扳机组合失焦或重连后必须先释放再接受新选择。
+        pad.Reset();pad.Update({},true);trigger.buttons=kView;value=200;
+        check(!pad.Update(trigger,false).actions,"后台扳机组合不排入逐项选择");
+        check(!pad.Update(trigger,true).actions,"按住扳机组合切回前台不误选下一项");
+        pad.Update({},true);
+        check(pad.Update(trigger,true).actions==(right ? NextTravelItem : PreviousTravelItem),
+              "失焦后全部释放再组合可以恢复逐项选择");
+        pad.Reset();
+        check(!pad.Update(trigger,true).actions,"重连时已按住的逐项选择组合不触发");
+        pad.Update({},true);
+        check(pad.Update(trigger,true).actions==(right ? NextTravelItem : PreviousTravelItem),
+              "重连后全部释放再组合可以恢复逐项选择");
+    }
     // 组合期间吞掉扳机和方向键；先松 View 后仍握住扳机也不能突然攻击。
     pad.Reset(); pad.Update({}, true);
     const PadSample movingChord{static_cast<uint16_t>(kView | 0x0001), 255, 220, 16000, -16000, 18000, -18000};
@@ -143,6 +190,32 @@ int main() {
     keyboard.Update(0, false, true);
     check(keyboard.Update(ToggleEnabled, true, true) == ToggleEnabled,
           "Ctrl 不改变 F9 的宝箱暂停功能，也不影响探索开关");
+    keyboard.Update(0, false, true);
+    check(keyboard.Update(ToggleFilter, true, true) == ToggleRevisit,
+          "Ctrl + F10 打开回访，不同时切换宝箱清单筛选");
+    keyboard.Update(0, false, true);
+    check(keyboard.Update(TogglePanel, true, true) == ConfirmRevisit,
+          "Ctrl + F7 只提交回访确认，不同时隐藏面板");
+    keyboard.Update(0,false,true);
+    check(keyboard.Update(PreviousPage,true,true)==PreviousTravelItem,
+          "Ctrl加PgUp只选择传送清单上一项");
+    keyboard.Update(0,false,true);
+    check(keyboard.Update(NextPage,true,true)==NextTravelItem,
+          "Ctrl加PgDn只选择传送清单下一项");
+    keyboard.Update(0,false,true);
+    check(keyboard.Update(NextPage,false,true)==NextPage,"单独PgDn提交两个清单共用的下一页动作");
+    keyboard.Update(0,false,true);
+    check(keyboard.Update(PreviousPage,false,true)==PreviousPage,"单独PgUp提交两个清单共用的上一页动作");
+    check(!keyboard.Update(PreviousPage,true,true),"先按PgUp再按Ctrl不追加逐项选择");
+    keyboard.Update(0,true,true);
+    check(keyboard.Update(PreviousPage,true,true)==PreviousTravelItem,"按住Ctrl重新点按PgUp仅选择上一项");
+    check(!keyboard.Update(PreviousPage,true,true),"长按Ctrl加PgUp不连续选择");
+    check(!keyboard.Update(PreviousPage,false,true),"先松Ctrl不泄漏额外翻页动作");
+    keyboard.Update(0,false,true);
+    check(!keyboard.Update(NextPage,true,false),"后台逐项选择组合不排入指令");
+    check(!keyboard.Update(NextPage,true,true),"带着逐项选择组合切回前台不触发");
+    keyboard.Update(0,false,true);
+    check(keyboard.Update(NextPage,true,true)==NextTravelItem,"全部释放后逐项选择组合恢复");
     // 后台采样必须丢弃动作；按住组合切回来也不会触发，直到全部松开再重新按下。
     check(keyboard.Update(ToggleList, true, false) == 0, "后台 Ctrl + F8 不触发传送辅助");
     check(keyboard.Update(ToggleList, true, true) == 0, "按住组合切回前台不误触");
