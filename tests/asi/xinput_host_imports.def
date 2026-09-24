@@ -1,0 +1,4 @@
+LIBRARY xinput1_4.dll
+EXPORTS
+    Sky2HostGetState @2 NONAME
+    Sky2HostSetState @3 NONAME

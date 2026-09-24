@@ -27,7 +27,8 @@ struct Counts {
 };
 
 // 排入工作线程；不在 DLL 加载锁内等待或创建图形设备。
-void Start() noexcept;
+// pluginMode 仅选择数据目录与诊断标识，不改变游戏功能；两种入口共用实现与重复加载保护。
+void Start(bool pluginMode = false) noexcept;
 Counts ReadCounts();
 bool InstallOverlay();
 }

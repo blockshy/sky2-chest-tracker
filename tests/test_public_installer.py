@@ -1,368 +1,151 @@
-"""在 Windows 合成目录中验证真实安装/卸载脚本，不依赖游戏及第三方 Mod。"""
-import hashlib
+"""真实独立版安装器：无收据混用、未知文件保护、精简载荷与更新恢复。"""
 import json
 import os
-from pathlib import Path
-import shutil
-import subprocess
-import tempfile
+import stat
 import unittest
+from installer_fixture_support import InstallerFixture, PWSH, PS51, PAYLOADS, OLD, FOREIGN, LAYOUT, digest
 
 
-ROOT = Path(__file__).resolve().parents[1]
-# 迁移白名单针对已经发布的旧文档，不能用持续更新的当前文档替代测试输入。
-LEGACY_FIXTURES = ROOT / 'tests' / 'fixtures' / 'legacy-0.3.2'
-PWSH = shutil.which('pwsh')
-PAYLOAD = b'synthetic chest tracker DLL'
-FOREIGN = b'synthetic unrelated mod DLL'
-OLD = b'synthetic previous tracker DLL'
+@unittest.skipUnless(os.name == 'nt' and PWSH, '需要 Windows PowerShell 环境')
+class StandaloneSafety(InstallerFixture):
+    kind = 'standalone-proxy'
 
+    def test_install_payload_only_then_uninstall(self):
+        self.invoke(self.kind)
+        files = {p.relative_to(self.game).as_posix() for p in self.game.rglob('*') if p.is_file()}
+        self.assertEqual(files, {'sora_2nd.exe', 'save014.dat', 'xinput1_4.dll', 'Sky2ChestTracker/LICENSES.txt'})
+        self.invoke(self.kind, 'Uninstall')
+        self.assertFalse((self.game / 'Sky2ChestTracker').exists())
+        self.assertEqual((self.game / 'save014.dat').read_bytes(), b'save sentinel')
 
-def digest(data):
-    """独立计算预期哈希，避免测试与被测脚本共用归属判断实现。"""
-    return hashlib.sha256(data).hexdigest()
+    def test_manual_install_script_update_and_uninstall_without_receipt(self):
+        self.manual(self.kind, old=True)
+        self.write('Sky2ChestTracker/tracker.log', b'preserve log')
+        self.invoke(self.kind)
+        self.assertEqual((self.game / 'xinput1_4.dll').read_bytes(), PAYLOADS[self.kind])
+        self.assertEqual(len(list((self.packages[self.kind] / 'backups').glob('*.dll'))), 1)
+        self.invoke(self.kind, 'Uninstall')
+        self.assertEqual((self.game / 'Sky2ChestTracker/tracker.log').read_bytes(), b'preserve log')
 
+    def test_no_backup_update_does_not_create_backup(self):
+        self.manual(self.kind, old=True)
+        self.invoke(self.kind, flags=('-NoBackup',))
+        self.assertFalse((self.packages[self.kind] / 'backups').exists())
 
-@unittest.skipUnless(os.name == 'nt' and PWSH, '安装器测试需要 Windows 和 PowerShell 7')
-class InstallerSafety(unittest.TestCase):
-    def setUp(self):
-        # 临时目录限定在被 Git 忽略的测试构建根目录；清理前再次核对边界。
-        self.test_root = (ROOT / 'build-installer-tests').resolve()
-        self.test_root.mkdir(exist_ok=True)
-        self.temp = tempfile.TemporaryDirectory(prefix='case-', dir=self.test_root)
-        self.root = Path(self.temp.name).resolve()
-        self.assertEqual(self.root.parent, self.test_root)
-        self.addCleanup(self.clean_fixture)
-        self.package = self.root / 'package'
-        self.game = self.root / '游戏目录 [test]'
-        self.game.mkdir()
-        (self.game / 'sora_2nd.exe').write_text('SKY2 INSTALLER TEST FIXTURE', encoding='utf-8')
-        self.packaged_mod = self.package / 'dist' / 'Sky2ChestTracker'
-        (self.packaged_mod / 'licenses').mkdir(parents=True)
-        for name in ('Install-Mod.ps1', 'Uninstall-Mod.ps1', 'README.md'):
-            shutil.copyfile(ROOT / name, self.package / name)
-        for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
-            shutil.copyfile(ROOT / name, self.packaged_mod / name)
-        for name in ('Dear-ImGui.txt', 'MinHook.txt', 'ED9ModManager.txt'):
-            shutil.copyfile(ROOT / 'licenses' / name, self.packaged_mod / 'licenses' / name)
-        shutil.copyfile(ROOT / 'installer' / 'legacy-documents.json',
-                        self.package / 'dist' / 'legacy-documents.json')
-        self.source = self.package / 'dist' / 'xinput1_4.dll'
-        self.source.write_bytes(PAYLOAD)
-        (self.packaged_mod / 'install.json').write_text(json.dumps({
-            'product': 'Sky2ChestTracker', 'version': '0.3.2',
-            'dll_sha256': digest(PAYLOAD), 'installed_at': None,
-            'installation_method': 'manual-package-template'
-        }), encoding='utf-8')
-        (self.package / 'dist' / 'manifest.json').write_text(json.dumps({
-            'version': '0.3.2', 'dll_sha256': digest(PAYLOAD)
-        }), encoding='utf-8')
-        self.target = self.game / 'xinput1_4.dll'
-        self.receipt = self.game / 'Sky2ChestTracker' / 'install.json'
-        # 模拟其他 Mod 与存档，成功或失败的卸载都必须保留它们。
-        (self.game / 'another-mod.txt').write_bytes(FOREIGN)
-        (self.game / 'save014.dat').write_bytes(b'synthetic save sentinel')
-
-    def clean_fixture(self):
-        """只有本用例创建且仍在预定根目录内的临时目录才允许递归清理。"""
-        if self.root.resolve().parent != self.test_root:
-            raise RuntimeError('测试清理目录超出边界')
-        self.temp.cleanup()
-
-    def write_receipt(self, data=PAYLOAD, product='Sky2ChestTracker'):
-        self.receipt.parent.mkdir(exist_ok=True)
-        self.receipt.write_text(json.dumps({
-            'product': product, 'dll_sha256': digest(data), 'version': 'test'
-        }), encoding='utf-8')
-
-    def snapshot(self):
-        """记录整个合成目录，失败与预演不能偷偷写入备份、记录或其他文件。"""
-        return {str(p.relative_to(self.root)): p.read_bytes()
-                for p in self.root.rglob('*') if p.is_file()}
-
-    def run_script(self, action, success, *options, message=None):
-        result = subprocess.run([
-            PWSH, '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
-            str(ROOT / 'tests' / 'Invoke-InstallerFixture.ps1'),
-            '-ScriptPath', str(self.package / f'{action}-Mod.ps1'),
-            '-GamePath', str(self.game), *options
-        ], capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30)
-        self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
-        if message:
-            # 失败原因也必须匹配，避免早期门禁意外失败导致后续保护测试假通过。
-            self.assertIn(message, result.stdout + result.stderr)
-        return result
-
-    def assert_refused_without_changes(self, message='安装记录'):
-        """同一冲突应分别阻止安装与卸载，且两次操作均保留所有原始字节。"""
-        before = self.snapshot()
+    def test_unknown_same_name_never_owned_by_receipt(self):
+        self.write('xinput1_4.dll', FOREIGN)
+        self.receipt(self.kind, hash_value=digest(FOREIGN))
         for action in ('Install', 'Uninstall'):
-            with self.subTest(action=action):
-                self.run_script(action, False, message=message)
-                self.assertEqual(self.snapshot(), before)
+            self.refused(self.kind, action)
 
-    def test_unknown_dll_without_receipt(self):
-        """先安装其他同名代理：两种脚本都不能覆盖或删除。"""
-        self.target.write_bytes(FOREIGN)
-        self.assert_refused_without_changes()
+    def test_stale_valid_receipt_cannot_authorize_foreign_binary(self):
+        self.write('xinput1_4.dll', FOREIGN)
+        self.receipt(self.kind)
+        self.refused(self.kind)
+        self.refused(self.kind, 'Uninstall')
 
-    def test_replaced_dll_with_stale_receipt(self):
-        """其他 Mod 后来替换 DLL：即使保留了本 Mod 的记录也必须拒绝。"""
-        self.write_receipt()
-        self.target.write_bytes(FOREIGN)
-        self.assert_refused_without_changes()
+    def test_foreign_license_conflict_stops_before_binary_changes(self):
+        self.manual(self.kind, old=True)
+        self.write('Sky2ChestTracker/LICENSES.txt', FOREIGN)
+        self.refused(self.kind)
 
-    def test_wrong_product_with_matching_hash(self):
-        """仅哈希相同仍不足以授权，产品标识也必须匹配。"""
-        self.target.write_bytes(FOREIGN)
-        self.write_receipt(FOREIGN, product='AnotherMod')
-        self.assert_refused_without_changes()
+    def test_user_document_and_runtime_directory_preserved_without_receipt(self):
+        self.write('Sky2ChestTracker/my-notes.txt', FOREIGN)
+        self.write('Sky2ChestTracker/revisit-return.dat', FOREIGN)
+        self.invoke(self.kind)
+        self.invoke(self.kind, 'Uninstall')
+        self.assertEqual((self.game / 'Sky2ChestTracker/my-notes.txt').read_bytes(), FOREIGN)
+        self.assertEqual((self.game / 'Sky2ChestTracker/revisit-return.dat').read_bytes(), FOREIGN)
 
-    def test_corrupt_receipt(self):
-        self.target.write_bytes(PAYLOAD)
-        self.write_receipt()
-        self.receipt.write_text('{broken JSON', encoding='utf-8')
-        self.assert_refused_without_changes()
+    def test_legacy_known_license_receipt_cleaned_unknown_notes_preserved(self):
+        self.manual(self.kind, old=True)
+        self.write('Sky2ChestTracker/LICENSE', b'legacy license')
+        self.write('Sky2ChestTracker/README.md', FOREIGN)
+        receipt = self.receipt(self.kind)
+        self.invoke(self.kind)
+        self.assertFalse(receipt.exists())
+        self.assertFalse((self.game / 'Sky2ChestTracker/LICENSE').exists())
+        self.assertEqual((self.game / 'Sky2ChestTracker/README.md').read_bytes(), FOREIGN)
 
-    def test_incomplete_receipt(self):
-        self.target.write_bytes(PAYLOAD)
-        self.write_receipt()
-        self.receipt.write_text('{"product": "Sky2ChestTracker"}', encoding='utf-8')
-        self.assert_refused_without_changes()
+    def test_unrecognized_dynamic_receipt_is_preserved(self):
+        self.manual(self.kind)
+        receipt = self.receipt(self.kind, hash_value=digest(FOREIGN))
+        before = receipt.read_bytes()
+        self.invoke(self.kind)
+        self.assertEqual(receipt.read_bytes(), before)
 
-    def make_link(self, link, target, directory=False):
-        """链接测试只指向当前合成目录；未授予创建权限时明确报告跳过。"""
+    def test_current_license_in_known_list_never_cleanup_target(self):
+        package = self.packages[self.kind]
+        known_path = package / 'installer/known-files.json'
+        known = json.loads(known_path.read_text())
+        license_path = LAYOUT[self.kind][2]
+        known['files'].append(dict(type=self.kind, product='Sky2ChestTracker', path=license_path,
+                                   sha256=digest((package / 'dist' / license_path).read_bytes())))
+        self.write_json(known_path, known)
+        self.manual(self.kind)
+        self.invoke(self.kind)
+        self.assertTrue((self.game / license_path).is_file())
+
+    def test_whatif_no_files_or_directories_created(self):
+        before = self.snapshot()
+        dirs = {str(p) for p in self.root.rglob('*') if p.is_dir()}
+        self.invoke(self.kind, flags=('-Preview',))
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual({str(p) for p in self.root.rglob('*') if p.is_dir()}, dirs)
+
+    def test_running_game_and_wrong_exe_leave_everything_untouched(self):
+        for flag, message in [('-Running', '退出游戏'), ('-UseRealExeHash', 'EXE')]:
+            self.refused(self.kind, message=message, flags=(flag,))
+
+    def test_manifest_path_traversal_duplicate_and_wrong_product_rejected(self):
+        path = self.packages[self.kind] / 'installer/manifest.json'
+        original = json.loads(path.read_text())
+        cases = [dict(original, path='../outside.dll'), dict(original, product='Foreign'),
+                 dict(original, files=[original['files'][0], original['files'][0]]),
+                 dict(original, files=[original['files'][0], dict(path='../outside.txt', sha256=digest(FOREIGN))])]
+        for data in cases:
+            with self.subTest(data=data):
+                self.write_json(path, data)
+                self.refused(self.kind, message='安装包')
+        self.write_json(path, original)
+
+    def test_payload_tamper_rejected(self):
+        (self.packages[self.kind] / 'dist/xinput1_4.dll').write_bytes(FOREIGN)
+        self.refused(self.kind, message='哈希不一致')
+
+    def test_standalone_refuses_asi_and_loader(self):
+        self.manual('asi-loader')
+        self.refused(self.kind)
+        self.manual('asi-plugin')
+        self.refused(self.kind, message='已有宝箱 ASI')
+
+    def test_parent_directory_link_rejected(self):
+        outside = self.root / 'outside'
+        outside.mkdir()
+        self.make_link(self.game / 'Sky2ChestTracker', outside, True)
+        self.refused(self.kind, message='重解析点')
+
+    def test_file_link_rejected(self):
+        outside = self.root / 'outside.dll'
+        outside.write_bytes(PAYLOADS[self.kind])
+        self.make_link(self.game / 'xinput1_4.dll', outside)
+        self.refused(self.kind, message='重解析点')
+
+    @unittest.skipUnless(PS51.exists(), '需要系统 Windows PowerShell 5.1')
+    def test_powershell51_install_and_uninstall(self):
+        self.invoke(self.kind, executable=PS51)
+        self.invoke(self.kind, 'Uninstall', executable=PS51)
+        self.assertFalse((self.game / 'xinput1_4.dll').exists())
+
+    def test_readonly_binary_keeps_original_and_retry_succeeds(self):
+        """真实只读属性应使原子替换失败；清除属性后相同包能够重试更新。"""
+        self.manual(self.kind, old=True)
+        target = self.game / 'xinput1_4.dll'
+        target.chmod(stat.S_IREAD)
         try:
-            os.symlink(target, link, target_is_directory=directory)
-        except OSError as error:
-            if getattr(error, 'winerror', None) == 1314:
-                self.skipTest('当前 Windows 账户没有创建符号链接权限')
-            raise
-
-    def test_linked_dll_is_refused(self):
-        external = self.root / 'external.dll'
-        external.write_bytes(PAYLOAD)
-        self.make_link(self.target, external)
-        self.write_receipt()
-        self.assert_refused_without_changes('重解析点')
-
-    def test_linked_receipt_is_refused(self):
-        self.target.write_bytes(PAYLOAD)
-        self.write_receipt()
-        external = self.root / 'external.json'
-        self.receipt.rename(external)
-        self.make_link(self.receipt, external)
-        self.assert_refused_without_changes('重解析点')
-
-    def test_linked_mod_directory_is_refused(self):
-        self.target.write_bytes(PAYLOAD)
-        self.write_receipt()
-        external = self.root / 'external-records'
-        # 两个目标都由当前用例创建，并且严格位于测试根目录内。
-        self.assertEqual(self.receipt.parent.resolve().parent, self.game.resolve())
-        self.assertEqual(external.resolve().parent, self.root)
-        self.receipt.parent.rename(external)
-        self.make_link(self.receipt.parent, external, directory=True)
-        self.assert_refused_without_changes('重解析点')
-
-    def test_fresh_install_and_uninstall(self):
-        """正常安装后只卸载被记录的 DLL，保留其他 Mod、存档、文档和记录。"""
-        self.run_script('Install', True)
-        self.assertEqual(self.target.read_bytes(), PAYLOAD)
-        # 精简安装不在游戏目录投放玩家说明或开发文档。
-        self.assertFalse((self.receipt.parent / 'docs').exists())
-        for name in ('README.md', 'CHANGELOG.md', 'CONTRIBUTING.md'):
-            self.assertFalse((self.receipt.parent / name).exists())
-        receipt = json.loads(self.receipt.read_text(encoding='utf-8-sig'))
-        self.assertEqual(receipt['product'], 'Sky2ChestTracker')
-        self.assertEqual(receipt['dll_sha256'].lower(), digest(PAYLOAD))
-        before = self.snapshot()
-        del before[str(self.target.relative_to(self.root))]
-        self.run_script('Uninstall', True)
-        self.assertEqual(self.snapshot(), before)
-
-    def test_update_preserves_old_dll(self):
-        self.target.write_bytes(OLD)
-        self.write_receipt(OLD)
-        self.run_script('Install', True)
-        self.assertEqual(self.target.read_bytes(), PAYLOAD)
-        backups = list((self.package / 'backups').glob('*.dll'))
-        self.assertEqual(len(backups), 1)
-        self.assertEqual(backups[0].read_bytes(), OLD)
-
-    def manual_install(self):
-        """模拟资源管理器完整复制 DLL 与配套文件夹，不运行安装脚本。"""
-        shutil.copyfile(self.source, self.target)
-        shutil.copytree(self.packaged_mod, self.receipt.parent, dirs_exist_ok=True)
-
-    def test_manual_install_then_script_uninstall(self):
-        self.manual_install()
-        before = self.snapshot()
-        del before[str(self.target.relative_to(self.root))]
-        self.run_script('Uninstall', True)
-        self.assertEqual(self.snapshot(), before)
-
-    def test_manual_install_then_script_update(self):
-        self.manual_install()
-        # 模拟先手动装过旧版：DLL 与旧版配套记录必须同时属于旧版本。
-        self.target.write_bytes(OLD)
-        self.write_receipt(OLD)
-        self.run_script('Install', True)
-        self.assertEqual(self.target.read_bytes(), PAYLOAD)
-        backups = list((self.package / 'backups').glob('*.dll'))
-        self.assertEqual(len(backups), 1)
-        self.assertEqual(backups[0].read_bytes(), OLD)
-
-    def test_script_install_then_complete_manual_update(self):
-        self.run_script('Install', True)
-        self.target.write_bytes(OLD)
-        self.write_receipt(OLD)
-        # 完整手动更新必须把 DLL 和新包记录配套覆盖，随后脚本才能识别。
-        self.manual_install()
-        before = self.snapshot()
-        del before[str(self.target.relative_to(self.root))]
-        self.run_script('Uninstall', True)
-        self.assertEqual(self.snapshot(), before)
-
-    def test_manual_dll_only_is_not_owned(self):
-        self.target.write_bytes(PAYLOAD)
-        self.assert_refused_without_changes()
-
-    def test_manual_record_cannot_claim_foreign_dll(self):
-        self.manual_install()
-        self.target.write_bytes(FOREIGN)
-        self.assert_refused_without_changes()
-
-    def test_unknown_nonempty_mod_directory_is_not_taken_over(self):
-        self.receipt.parent.mkdir()
-        (self.receipt.parent / 'personal.txt').write_bytes(b'unknown directory')
-        before = self.snapshot()
-        self.run_script('Install', False, message='缺少安装记录')
-        self.assertEqual(self.snapshot(), before)
-
-    def test_foreign_leftover_receipt_is_not_taken_over(self):
-        self.write_receipt(FOREIGN, product='AnotherMod')
-        before = self.snapshot()
-        self.run_script('Install', False, message='残留安装记录不属于本 Mod')
-        self.assertEqual(self.snapshot(), before)
-
-    def test_manual_dll_only_update_leaves_stale_receipt(self):
-        self.run_script('Install', True)
-        self.target.write_bytes(OLD)
-        self.assert_refused_without_changes()
-
-    def test_script_install_then_manual_uninstall_then_reinstall(self):
-        self.run_script('Install', True)
-        # 手动只移走已确认的 DLL，留下安装记录；重新安装应正确恢复 DLL。
-        self.target.rename(self.root / 'manually-removed.dll')
-        (self.receipt.parent / 'personal.txt').write_bytes(b'keep user file')
-        self.run_script('Install', True)
-        self.assertEqual(self.target.read_bytes(), PAYLOAD)
-        self.assertEqual((self.root / 'manually-removed.dll').read_bytes(), PAYLOAD)
-        self.assertEqual((self.receipt.parent / 'personal.txt').read_bytes(), b'keep user file')
-
-    def test_corrupt_existing_backup_blocks_update(self):
-        """已有备份损坏时不能继续更新，以免失去可恢复的旧版副本。"""
-        self.target.write_bytes(OLD)
-        self.write_receipt(OLD)
-        (self.package / 'backups').mkdir()
-        (self.package / 'backups' / f'{digest(OLD)}.dll').write_bytes(b'corrupt backup')
-        before = self.snapshot()
-        self.run_script('Install', False, message='备份校验失败')
-        self.assertEqual(self.snapshot(), before)
-
-    def test_same_dll_is_noop(self):
-        self.target.write_bytes(PAYLOAD)
-        self.write_receipt()
-        before = self.snapshot()
-        self.run_script('Install', True)
-        self.assertEqual(self.snapshot(), before)
-
-    def test_legacy_docs_are_archived_without_losing_custom_files(self):
-        """只搬走已知原版说明；保留修改后的同名文档和 docs 中的其他文件。"""
-        self.target.write_bytes(PAYLOAD)
-        self.write_receipt()
-        docs = self.receipt.parent / 'docs'
-        docs.mkdir()
-        originals = {
-            'CONTRIBUTING.md': (LEGACY_FIXTURES / 'CONTRIBUTING.md').read_bytes(),
-            'docs/ARCHITECTURE.md': (LEGACY_FIXTURES / 'ARCHITECTURE.md').read_bytes(),
-        }
-        for name, data in originals.items():
-            (self.receipt.parent / name).write_bytes(data)
-        custom_readme = self.receipt.parent / 'README.md'
-        custom_readme.write_bytes(b'user modified readme')
-        (docs / 'personal.txt').write_bytes(b'user notes')
-        before = self.snapshot()
-        self.run_script('Install', True, '-Preview')
-        self.assertEqual(self.snapshot(), before)
-        self.run_script('Install', True)
-        backups = list((self.package / 'backups').glob('legacy-docs-*'))
-        self.assertEqual(len(backups), 1)
-        for name, data in originals.items():
-            self.assertFalse((self.receipt.parent / name).exists())
-            self.assertEqual((backups[0] / name).read_bytes(), data)
-        self.assertEqual(custom_readme.read_bytes(), b'user modified readme')
-        self.assertEqual((docs / 'personal.txt').read_bytes(), b'user notes')
-        self.assertEqual(self.target.read_bytes(), PAYLOAD)
-
-    def test_legacy_empty_docs_directory_is_removed(self):
-        self.target.write_bytes(PAYLOAD)
-        self.write_receipt()
-        docs = self.receipt.parent / 'docs'
-        docs.mkdir()
-        shutil.copyfile(LEGACY_FIXTURES / 'ARCHITECTURE.md', docs / 'ARCHITECTURE.md')
-        self.run_script('Install', True)
-        self.assertFalse(docs.exists())
-        archived = list((self.package / 'backups').glob('legacy-docs-*/docs/ARCHITECTURE.md'))
-        self.assertEqual(len(archived), 1)
-        self.assertEqual(archived[0].read_bytes(), (LEGACY_FIXTURES / 'ARCHITECTURE.md').read_bytes())
-
-    def test_missing_package_metadata_is_refused_before_install(self):
-        (self.package / 'dist' / 'legacy-documents.json').unlink()
-        before = self.snapshot()
-        self.run_script('Install', False, message='安装包文件不完整')
-        self.assertEqual(self.snapshot(), before)
-
-    def test_preview_fresh_install(self):
-        before = self.snapshot()
-        self.run_script('Install', True, '-Preview')
-        self.assertEqual(self.snapshot(), before)
-        self.assertFalse(self.receipt.parent.exists())
-
-    def test_preview_update_and_uninstall(self):
-        self.target.write_bytes(OLD)
-        self.write_receipt(OLD)
-        before = self.snapshot()
-        for action in ('Install', 'Uninstall'):
-            self.run_script(action, True, '-Preview')
-            self.assertEqual(self.snapshot(), before)
-        self.assertFalse((self.package / 'backups').exists())
-
-    def test_tampered_package(self):
-        self.source.write_bytes(b'altered payload')
-        before = self.snapshot()
-        self.run_script('Install', False, message='安装包 DLL 哈希不一致')
-        self.assertEqual(self.snapshot(), before)
-
-    def test_wrong_game_version(self):
-        before = self.snapshot()
-        self.run_script('Install', False, '-UseRealExeHash', message='游戏 EXE 与适配版本不符')
-        self.assertEqual(self.snapshot(), before)
-
-    def test_running_game(self):
-        self.target.write_bytes(PAYLOAD)
-        self.write_receipt()
-        before = self.snapshot()
-        for action in ('Install', 'Uninstall'):
-            self.run_script(action, False, '-Running', message='请先正常退出游戏')
-            self.assertEqual(self.snapshot(), before)
-
-    def test_missing_dll_uninstall_is_noop(self):
-        before = self.snapshot()
-        self.run_script('Uninstall', True)
-        self.assertEqual(self.snapshot(), before)
-
-
-if __name__ == '__main__':
-    unittest.main()
+            self.invoke(self.kind, success=False)
+            self.assertEqual(target.read_bytes(), OLD[self.kind])
+        finally:
+            target.chmod(stat.S_IWRITE | stat.S_IREAD)
+        self.invoke(self.kind)
+        self.assertEqual(target.read_bytes(), PAYLOADS[self.kind])

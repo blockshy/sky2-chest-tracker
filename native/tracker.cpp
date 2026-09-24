@@ -6,6 +6,8 @@
 #include "revisit.h"
 #include "revisit_policy.h"
 #include "chest_catalog.h"
+#include "runtime_files.h"
+#include "game_language.h"
 #include <bcrypt.h>
 #include <MinHook.h>
 #include <algorithm>
@@ -14,7 +16,6 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
-#include <mutex>
 #include <vector>
 
 namespace tracker {
@@ -26,6 +27,9 @@ static uintptr_t g_base = 0;
 static std::atomic<unsigned> g_lastRow{UINT_MAX};
 static std::atomic<ULONGLONG> g_lastIconTick{0};
 static std::wstring g_folder;
+// 进程内只允许一个宝箱模块生效。句柄保留到进程退出，防止独立版与 ASI 版
+// 或重命名后的插件副本同时安装相同挂钩；不支持运行中卸载再装载。
+static HANDLE g_instanceGuard = nullptr;
 using GetIconFn = uint32_t(__fastcall*)(void*);
 static GetIconFn g_originalIcon = nullptr;
 using MapIconFn = uint32_t(__fastcall*)(void*, const void*);
@@ -43,15 +47,12 @@ template<class T> static bool Read(uintptr_t address, T& value) noexcept {
 }
 
 void Log(const char* message) noexcept {
-    // 日志只写入 Mod 自己的目录；错误不可传播到游戏的调用栈。
+    // 日志只写入本分发的数据目录；文件锁同时覆盖重复模块，大小检查与追加不会
+    // 交错。超过 1 MiB 时在原文件内重置，不产生额外备份或轮转文件。
     try {
-        static std::mutex lock;
-        std::lock_guard<std::mutex> guard(lock);
-        FILE* file = nullptr;
-        if (_wfopen_s(&file, (g_folder + L"\\tracker.log").c_str(), L"a") == 0 && file) {
-            std::fprintf(file, "[%llu] %s\n", GetTickCount64(), message);
-            std::fclose(file);
-        }
+        if (g_folder.empty() || !message) return;
+        const auto line = "[" + std::to_string(GetTickCount64()) + "] " + message + "\r\n";
+        AppendBoundedRuntimeLog(g_folder + L"\\tracker.log", line);
     } catch (...) {}
 }
 
@@ -163,7 +164,7 @@ static bool CheckExecutable() {
     return std::strcmp(hex, kExeSha256) == 0;
 }
 
-static DWORD WINAPI Initialize(void*) noexcept {
+static DWORD WINAPI Initialize(void* context) noexcept {
     try {
         // 在线程实际运行、加载锁已释放后固定本模块；退出进程时由系统统一回收。
         // 地图虚表会指向本模块，禁止中途卸载以免留下悬空函数指针。
@@ -171,13 +172,28 @@ static DWORD WINAPI Initialize(void*) noexcept {
         if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                                reinterpret_cast<LPCWSTR>(&Start), &pinned)) return 0;
         wchar_t path[MAX_PATH]{};
-        GetModuleFileNameW(g_module, path, MAX_PATH);
-        g_folder = path;
-        g_folder.resize(g_folder.find_last_of(L"\\/"));
-        g_folder += L"\\Sky2ChestTracker";
-        CreateDirectoryW(g_folder.c_str(), nullptr);
+        // 两种分发均以游戏 EXE 定位，但使用相互独立的数据目录。ASI 数据与插件
+        // 放在同一个 plugins 树下；旧 ASI 布局仅由安装器显式迁移，运行时不导入。
+        // 路径被截断时拒绝初始化，不能将日志或返程文件误写到错误的目录。
+        const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
+        if (length == 0 || length >= MAX_PATH) return 0;
+        const bool pluginMode = context != nullptr;
+        g_folder = RuntimeDataDirectory(std::wstring_view(path, length), pluginMode);
+        if (!PrepareRuntimeDataDirectory(g_folder, pluginMode)) return 0;
+        wchar_t guardName[96]{};
+        swprintf_s(guardName, L"Local\\Sky2ChestTracker.Process.%lu", GetCurrentProcessId());
+        g_instanceGuard = CreateMutexW(nullptr, FALSE, guardName);
+        const DWORD guardError = GetLastError();
+        if (!g_instanceGuard || guardError == ERROR_ALREADY_EXISTS) {
+            if (g_instanceGuard) CloseHandle(g_instanceGuard);
+            g_instanceGuard = nullptr;
+            Log("Duplicate tracker module or unavailable process guard; all hooks skipped.");
+            return 0;
+        }
         if (!CheckExecutable()) { Log("Unsupported executable; all hooks skipped."); return 0; }
         g_base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        // 只在 EXE 哈希验证通过后绑定语言地址；读取文本语言，不修改设置或语音选项。
+        InitializeGameLanguage(g_base);
         // 双重校验：磁盘哈希正确且内存中虚表仍指向预期函数，避免覆盖其他 Mod 的挂钩。
         auto slot = reinterpret_cast<void**>(g_base + 0xB04E10 + 9 * sizeof(void*));
         void* old = nullptr;
@@ -214,18 +230,20 @@ static DWORD WINAPI Initialize(void*) noexcept {
         DWORD unused = 0;
         VirtualProtect(slot, sizeof(void*), protection, &unused);
         Log(revisit_policy::kUnrestricted ?
-            "Sky2ChestTracker 0.5.0 active: chest tracking, exploration and full travel." :
-            "Sky2ChestTracker 0.5.0 active: chest tracking, exploration and story-restricted travel.");
+            "Sky2ChestTracker 0.6.0 active: chest tracking, exploration and full travel." :
+            "Sky2ChestTracker 0.6.0 active: chest tracking, exploration and story-restricted travel.");
     } catch (...) { Log("Initialization failed; exception contained."); }
     return 0;
 }
 
-void Start() noexcept {
+void Start(bool pluginMode) noexcept {
     static std::once_flag once;
     try {
-        std::call_once(once, [] {
+        std::call_once(once, [pluginMode] {
             // 只排入工作线程并立即返回，不等待线程，也不在加载锁中执行图形初始化。
-            if (HANDLE thread = CreateThread(nullptr, 0, Initialize, nullptr, 0, nullptr)) CloseHandle(thread);
+            // 线程参数只用作入口类型标记，从不解引用；不传入会离开作用域的栈地址。
+            void* context = pluginMode ? reinterpret_cast<void*>(uintptr_t{1}) : nullptr;
+            if (HANDLE thread = CreateThread(nullptr, 0, Initialize, context, 0, nullptr)) CloseHandle(thread);
         });
     } catch (...) {}
 }

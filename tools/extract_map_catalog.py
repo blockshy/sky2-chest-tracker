@@ -1,4 +1,4 @@
-"""将本机宝箱目录关联到简体中文地图名称，生成收集清单的稳定分组。
+"""将本机宝箱目录关联到官方八语地图名称，生成收集清单的稳定分组。
 
 室外大区包含多条道路，按已核对的宝箱命名前缀拆分；迷宫保留整图汇总。
 分组只影响显示与统计，不改变宝箱原始行号、开箱标志或地图图标逻辑。
@@ -6,8 +6,8 @@
 from pathlib import Path
 import argparse
 import json
-import struct
-from formats import Fpac
+from localized_game_names import (LANGUAGES, cpp_array, load_language_resources,
+                                  read_places, scene_region)
 
 
 # 显式对应原生地点 ID，避免用中英文模糊匹配把同名道路或隧道归错组。
@@ -45,28 +45,6 @@ def region_name(scene: str, places: list[dict]) -> str:
         if scene.startswith(prefix):
             return next(p["name"] for p in places if p["scene"] == root and not p["submap"])
     raise ValueError(f"未核对的大地图归属：{scene}")
-
-
-def read_places(data: bytes) -> list[dict]:
-    """验证地点表布局与每个字符串指针，再读取分组所需的少数字段。"""
-    if len(data) < 88 or data[:8] != b"#TBL\x01\x00\x00\x00" or data[8:72].split(b"\0")[0] != b"PlaceTableData":
-        raise ValueError("地点表头不属于当前版本")
-    _, start, stride, count = struct.unpack_from("<4I", data, 72)
-    if stride != 168 or count != 616 or start + stride * count > len(data):
-        raise ValueError("地点表记录大小或数量发生变化")
-
-    def string(at: int) -> str:
-        offset = struct.unpack_from("<Q", data, at)[0]
-        if not start + stride * count <= offset < len(data):
-            raise ValueError("地点名称指针越界")
-        end = data.find(b"\0", offset)
-        if end < 0:
-            raise ValueError("地点名称缺少结束符")
-        return data[offset:end].decode("utf-8")
-
-    return [{"id": struct.unpack_from("<I", data, at)[0], "scene": string(at + 8),
-             "submap": string(at + 16), "name": string(at + 96)}
-            for at in range(start, start + stride * count, stride)]
 
 
 def build_groups(catalog: dict, places: list[dict]) -> dict:
@@ -112,10 +90,65 @@ def build_groups(catalog: dict, places: list[dict]) -> dict:
     return {"schema_version": 2, "maps": groups, "chest_map_indices": membership}
 
 
+def build_localized_maps(groups: list[dict], resources: dict) -> list[dict]:
+    """只本地化展示文字，不改变宝箱分组、场景标识或统计下标。
+
+    道路使用显式地点 ID；迷宫要求同场景的原生主行名称唯一。所有名称完整
+    保留游戏原文，不添加中文『各层』『卢安』等曾经使用的 Mod 展示别名。
+    跨楼层统计的含义应由界面自己的多语言说明表达，而不是改写官方地名。
+    """
+    if set(resources) != set(LANGUAGES):
+        raise ValueError("地图名称资源必须覆盖简体中文、日文、英文、繁体中文、德文、法文、西班牙文、韩文")
+    result = []
+    for group in groups:
+        scene, key = group["scene"], group["key"]
+        localized = {"key": key, "scene": scene, "names": {}, "regions": {}, "paths": {},
+                     "source": {"table": "t_place.tbl", "scene": scene}}
+        for language in LANGUAGES:
+            source = resources[language]
+            if scene in SPLIT_PLACES:
+                prefix = key.partition(":")[2]
+                if prefix not in SPLIT_PLACES[scene]:
+                    raise ValueError(f"多语言地图包含未核对前缀：{key}")
+                identifier = SPLIT_PLACES[scene][prefix]
+                candidates = [p for p in source.places if p["scene"] == scene and p["id"] == identifier]
+                localized["source"]["id"] = identifier
+            else:
+                candidates = [p for p in source.places if p["scene"] == scene and not p["submap"]]
+            names = {p["name"] for p in candidates}
+            if len(names) != 1 or not next(iter(names)) or next(iter(names)).startswith("◆"):
+                raise ValueError(f"{language} 地图名称缺失、有歧义或属于内部行：{key}")
+            name = next(iter(names))
+            region = source.regions[scene_region(scene)]
+            localized["names"][language] = name
+            localized["regions"][language] = region
+            localized["paths"][language] = region + " / " + name
+        result.append(localized)
+    return result
+
+
+def write_localized_maps(rows: list[dict], output: Path) -> None:
+    """生成自包含旁路头文件；旧 MapDefinition 的布局和中文兼容字段保持不变。"""
+    lines = ["// 从玩家本机官方地点资源生成；数组顺序固定为简体中文、日文、英文、繁体中文、德文、法文、西班牙文、韩文。",
+             "#pragma once", "namespace tracker {",
+             "struct LocalizedMapDefinition { const char* key; const char* names[8]; const char* regions[8]; const char* paths[8]; };",
+             "inline constexpr LocalizedMapDefinition kLocalizedMaps[] = {"]
+    for row in rows:
+        arrays = ", ".join(cpp_array([row[key][language] for language in LANGUAGES])
+                           for key in ("names", "regions", "paths"))
+        lines.append("    {" + json.dumps(row["key"], ensure_ascii=False) + ", " + arrays + "},")
+    lines += ["};", "}", ""]
+    (output / "map_localization.h").write_text("\n".join(lines), encoding="utf-8")
+
+
 def extract(game: Path, catalog_path: Path, out: Path) -> None:
     """输出 JSON 供离线核对，以及无需游戏运行时加载文件的 C++ 常量表。"""
-    table = Fpac(game / "pac/steam/table_sc.pac").read("table_sc/t_place.tbl")
-    result = build_groups(json.loads(catalog_path.read_text(encoding="utf-8")), read_places(table))
+    resources = load_language_resources(game)
+    result = build_groups(json.loads(catalog_path.read_text(encoding="utf-8")), resources["sc"].places)
+    result["schema_version"] = 3
+    result["languages"] = list(LANGUAGES)
+    result["localized_maps"] = build_localized_maps(result["maps"], resources)
+    result["localization_sources"] = {language: source.sources for language, source in resources.items()}
     out.mkdir(parents=True, exist_ok=True)
     (out / "maps.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     lines = ["// 从本机地点表生成；每个宝箱仅归属一个统计地图，道路按原生命名前缀拆分。",
@@ -131,7 +164,9 @@ def extract(game: Path, catalog_path: Path, out: Path) -> None:
         lines.append("    " + ", ".join(map(str, result["chest_map_indices"][start:start + 24])) + ",")
     lines += ["};"]
     (out / "map_catalog.h").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(json.dumps({"maps": len(result["maps"]), "chests": len(result["chest_map_indices"])}))
+    write_localized_maps(result["localized_maps"], out)
+    print(json.dumps({"maps": len(result["maps"]), "chests": len(result["chest_map_indices"]),
+                      "languages": list(LANGUAGES)}))
 
 
 if __name__ == "__main__":

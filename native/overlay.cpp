@@ -6,6 +6,9 @@
 #include "revisit.h"
 #include "revisit_policy.h"
 #include "ui_scale.h"
+#include "ui_text.h"
+#include "localized_names.h"
+#include "game_language.h"
 #include <d3d11.h>
 #include <dxgi.h>
 #include <MinHook.h>
@@ -13,6 +16,7 @@
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
 #include <mutex>
+#include <array>
 #include <cstring>
 #include <ctime>
 namespace tracker {
@@ -38,6 +42,8 @@ static RevisitConfirmation g_revisitConfirmation;
 static RevisitNativeContext g_revisitConfirmContext{};
 static uint64_t g_revisitRequestToken = 0;
 static bool g_revisitSubmissionRejected = false;
+// 逐语言检查实际字形，不能用“找到某份 CJK 字体”推断简繁汉字、假名、韩文均齐全。
+static std::array<bool, kLanguageCount> g_languageFontComplete{};
 
 static bool RevisitCanSubmit(const RevisitNativeContext& context) {
     const auto phase = ReadRevisitNativeStatus().phase;
@@ -165,6 +171,112 @@ static void HandleKeys() {
     else CancelRevisitConfirmation();
 }
 
+// 根据当前合并字体的 cmap 检查各语言实际会用到的文字；不修改全局语言，
+// 不栅格化整个字库，不提前上传几千个字的纹理。相同码点只查询一次字体源。
+// 检查 Mod 文案与原生资源专名，避免日文字体能显示“地图”却缺少简中专名时误报完整。
+static void CheckPanelFontCoverage(ImFont* font) {
+    std::array<uint8_t, 0x10000> glyphCache{}; // 0 未检查；1 存在；2 缺失。
+    const char* names[] = {"Simplified Chinese", "Japanese", "English", "Traditional Chinese",
+                           "German", "French", "Spanish", "Korean"};
+    for (unsigned language = 0; language < kLanguageCount; ++language) {
+        bool complete = font != nullptr;
+        unsigned firstMissing = 0;
+        const auto checkText = [&](const char* text) {
+            if (!text || !*text || !font) return;
+            const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, -1, nullptr, 0);
+            if (!count) { complete = false; return; }
+            std::wstring wide(static_cast<size_t>(count), L'\0');
+            if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, -1, wide.data(), count)) {
+                complete = false;
+                return;
+            }
+            for (const wchar_t character : wide) {
+                const auto codepoint = static_cast<unsigned>(character);
+                if (codepoint < 0x20) continue; // 换行、制表符、终止符不需要可见字形。
+                auto& cached = glyphCache[codepoint];
+                if (!cached) cached = font->IsGlyphInFont(static_cast<ImWchar>(codepoint)) ? 1 : 2;
+                if (cached == 2) { complete = false; if (!firstMissing) firstMissing = codepoint; }
+            }
+        };
+        for (const auto& entry : kUiTexts) {
+            const char* texts[] = {entry.chinese, entry.japanese, entry.english, entry.traditionalChinese,
+                entry.german, entry.french, entry.spanish, entry.korean};
+            checkText(texts[language]);
+        }
+#if SKY2_HAS_MAP_LOCALIZATION
+        for (const auto& map : kLocalizedMaps) checkText(map.paths[language]);
+#endif
+#if SKY2_HAS_TRAVEL_LOCALIZATION
+        for (const auto& target : kLocalizedTravel) {
+            checkText(target.names[language]);
+            checkText(target.groups[language]);
+        }
+        for (const auto& region : kLocalizedRegions) checkText(region.names[language]);
+#endif
+        g_languageFontComplete[language] = complete;
+        if (!complete) {
+            char diagnostic[256]{};
+            std::snprintf(diagnostic, sizeof(diagnostic),
+                "Font coverage incomplete for %s (first missing U+%04X). Install matching Windows supplemental fonts.",
+                names[language], firstMissing);
+            Log(diagnostic);
+        }
+    }
+}
+
+// 只使用玩家机器已安装的字体，不随 Mod 打包或分发 Windows 字体。
+// 所有语言合并到同一字库：跟随游戏切换语言时无需重建纹理，也不会重置列表位置。
+// 中文、日文、韩文字体分别择优加载一份，避免把所有候选字体同时驻留内存。
+static void LoadPanelFonts(ImGuiIO& io) {
+    g_languageFontComplete.fill(false);
+    wchar_t windows[MAX_PATH]{};
+    GetWindowsDirectoryW(windows, MAX_PATH);
+    const std::wstring folder = std::wstring(windows) + L"\\Fonts\\";
+    static const ImWchar glyphs[] = {
+        0x0020, 0x024f, 0x1100, 0x11ff, 0x2000, 0x26ff, 0x3000, 0x318f,
+        0x31f0, 0x31ff, 0x3400, 0x9fff, 0xac00, 0xd7af, 0xff00, 0xffef, 0
+    };
+    bool loaded = false;
+    const auto load = [&](const wchar_t* filename) {
+        const auto path = folder + filename;
+        const DWORD attributes = GetFileAttributesW(path.c_str());
+        // AddFontFromFileTTF 对不存在的路径会触发断言，必须先检查再交给 ImGui。
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) return false;
+        char utf8[MAX_PATH * 3]{};
+        if (!WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, utf8, sizeof(utf8), nullptr, nullptr)) return false;
+        ImFontConfig config;
+        config.MergeMode = loaded;
+        if (!io.Fonts->AddFontFromFileTTF(utf8, 20.0f, &config, glyphs)) return false;
+        loaded = true;
+        return true;
+    };
+    // Segoe UI 是英文 Windows 的可靠基础字体；缺失时仍保留 ImGui 的内置拉丁字形。
+    if (!load(L"segoeui.ttf")) {
+        ImFontConfig config;
+        config.SizePixels = 20.0f;
+        io.Fonts->AddFontDefault(&config);
+        loaded = true;
+    }
+    // 英文原生地点同样包含 ① 等圈号，常规 Segoe UI 不提供这些字符。
+    // 单独合并 Windows 的符号字体，使英文系统无需为了这些名称安装中日韩字体。
+    load(L"seguisym.ttf");
+    bool chinese = false, japanese = false, korean = false;
+    for (const auto* name : {L"msyh.ttc", L"msyh.ttf", L"simhei.ttf", L"simsun.ttc", L"Deng.ttf", L"msjh.ttc", L"mingliu.ttc", L"NotoSansSC-Regular.ttf"})
+        if (load(name)) { chinese = true; break; }
+    for (const auto* name : {L"YuGothM.ttc", L"YuGothR.ttc", L"meiryo.ttc", L"msgothic.ttc", L"NotoSansJP-Regular.ttf"})
+        if (load(name)) { japanese = true; break; }
+    // 韩文有独立音节区，不能把“有汉字字体”误判为可显示韩文。
+    // 即使中日字体已存在也单独补入，确保游戏运行时切到韩文无需重新初始化面板。
+    for (const auto* name : {L"malgun.ttf", L"gulim.ttc", L"batang.ttc", L"NotoSansKR-Regular.ttf"})
+        if (load(name)) { korean = true; break; }
+    // 部分非中日 Windows 只装了其他 CJK 字库；它们仅作最终兜底，不优先改变字形。
+    if (!chinese || !japanese || !korean)
+        for (const auto* name : {L"NotoSansCJK-Regular.ttc", L"arialuni.ttf"})
+            if (load(name)) break;
+    // 文件名仅用于候选选择，语言可显示性最终由实际字形判定。
+    CheckPanelFontCoverage(io.Fonts->Fonts.Size ? io.Fonts->Fonts[0] : nullptr);
+}
+
 static bool InitializeGui(IDXGISwapChain* swap) {
     DXGI_SWAP_CHAIN_DESC description{};
     if (FAILED(swap->GetDesc(&description)) || !description.OutputWindow) return false;
@@ -183,12 +295,7 @@ static bool InitializeGui(IDXGISwapChain* swap) {
     // 面板没有可编辑控件，不保存 ImGui 布局文件，也不获取鼠标／键盘的独占输入。
     io.IniFilename = nullptr;
     io.LogFilename = nullptr;
-    wchar_t windows[MAX_PATH]{};
-    GetWindowsDirectoryW(windows, MAX_PATH);
-    std::wstring fontWide = std::wstring(windows) + L"\\Fonts\\msyh.ttc";
-    char font[MAX_PATH * 3]{};
-    WideCharToMultiByte(CP_UTF8, 0, fontWide.c_str(), -1, font, sizeof(font), nullptr, nullptr);
-    io.Fonts->AddFontFromFileTTF(font, 20.0f, nullptr, io.Fonts->GetGlyphRangesChineseFull());
+    LoadPanelFonts(io);
     ImGui::StyleColorsDark();
     auto& style = ImGui::GetStyle();
     style.WindowRounding = 8.0f;
@@ -230,18 +337,26 @@ static PanelShortcutLayout MeasurePanelShortcutLayout(bool controller) {
     const auto& style = ImGui::GetStyle();
     PanelShortcutLayout layout;
     layout.keyWidth = textWidth(controller ? "View + RS" : "F9") + 8.0f;
-    layout.leftWidth = std::max(textWidth("未到访传送点：等待关闭"),
-        layout.keyWidth + std::max(textWidth("切换模式"), textWidth("地图清单")));
+    char name[256]{}, currentArea[256]{}, inheritedArea[256]{}, mode[256]{};
+    std::snprintf(name, sizeof(name), UiString(UiText::NameState), UiString(UiText::UnvisitedTravel));
+    std::snprintf(currentArea, sizeof(currentArea), UiString(UiText::AreaCurrent), 566u, 566u);
+    std::snprintf(inheritedArea, sizeof(inheritedArea), UiString(UiText::AreaInherited), 566u, 566u);
+    std::snprintf(mode, sizeof(mode), UiString(UiText::ModeLabel), UiString(UiText::ModeInherited));
+    float stateWidth = 0;
+    for (const auto id : {UiText::Unavailable, UiText::WaitingOn, UiText::WaitingOff, UiText::On, UiText::Off})
+        stateWidth = std::max(stateWidth, textWidth(UiString(id)));
+    layout.leftWidth = std::max(textWidth(name) + stateWidth,
+        layout.keyWidth + std::max(textWidth(UiString(UiText::SwitchMode)), textWidth(UiString(UiText::MapList))));
     const float rightWidth = std::max(
-        layout.keyWidth + std::max(textWidth("显示/隐藏"), textWidth("暂停/恢复")),
-        textWidth(controller ? "View + 十字键下" : "Ctrl + F8"));
+        layout.keyWidth + std::max(textWidth(UiString(UiText::ShowHide)), textWidth(UiString(UiText::PauseResume))),
+        textWidth(controller ? UiString(UiText::DpadDown) : "Ctrl + F8"));
     float contentWidth = layout.leftWidth + rightWidth + style.CellPadding.x * 4;
-    for (const char* text : {"显示模式：继承记录（多周目）", "宝箱标记已暂停（原版显示）",
-                            "继承记录当前地区已开  566 / 566", "打开区域地图后显示两组地区统计",
-                            "闭合箱标：未开    开启箱标：已开", "宝箱追踪  ·  0.5.0"})
+    for (const char* text : {static_cast<const char*>(mode), UiString(UiText::Paused),
+                            static_cast<const char*>(currentArea), static_cast<const char*>(inheritedArea), UiString(UiText::OpenAreaMap),
+                            UiString(UiText::MarkerLegend), UiString(UiText::Title)})
         contentWidth = std::max(contentWidth, textWidth(text));
     if (controller)
-        contentWidth = std::max(contentWidth, textWidth("View：双窗口键；RS：按下右摇杆"));
+        contentWidth = std::max(contentWidth, textWidth(UiString(UiText::ControllerLegend)));
     // 两侧内边距和少量像素取整余量不属于内容列，防止缩放后最后一个字贴边。
     layout.windowWidth = contentWidth + style.WindowPadding.x * 2 + 4.0f;
     return layout;
@@ -249,8 +364,8 @@ static PanelShortcutLayout MeasurePanelShortcutLayout(bool controller) {
 
 static bool BeginPanelShortcutColumns(const char* id, const PanelShortcutLayout& layout) {
     if (!ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchProp)) return false;
-    ImGui::TableSetupColumn("左组", ImGuiTableColumnFlags_WidthFixed, layout.leftWidth);
-    ImGui::TableSetupColumn("右组", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("##left", ImGuiTableColumnFlags_WidthFixed, layout.leftWidth);
+    ImGui::TableSetupColumn("##right", ImGuiTableColumnFlags_WidthStretch);
     return true;
 }
 
@@ -267,7 +382,7 @@ static void DrawChestShortcuts(bool controller, const PanelShortcutLayout& layou
     if (BeginPanelShortcutColumns("ChestShortcuts", layout)) {
         const char* keys[] = {controller ? "View + X" : "F6", controller ? "View + B" : "F7",
                               controller ? "View + A" : "F8", controller ? "View + RS" : "F9"};
-        const char* actions[] = {"切换模式", "显示/隐藏", "地图清单", "暂停/恢复"};
+        const char* actions[] = {UiString(UiText::SwitchMode), UiString(UiText::ShowHide), UiString(UiText::MapList), UiString(UiText::PauseResume)};
         for (unsigned i = 0; i < 4; ++i) {
             if (i % 2 == 0) ImGui::TableNextRow();
             ImGui::TableNextColumn();
@@ -277,22 +392,22 @@ static void DrawChestShortcuts(bool controller, const PanelShortcutLayout& layou
     }
     // 修饰键说明仅在手柄模式下保留一行；按住状态复用同一行，不额外撑高面板。
     if (controller) ImGui::TextDisabled("%s", ControllerModifierHeld() ?
-        "View 已按住；RS：按下右摇杆" : "View：双窗口键；RS：按下右摇杆");
+        UiString(UiText::ControllerHeld) : UiString(UiText::ControllerLegend));
 }
 
 static void DrawExplorationStatus(const ExplorationStatus& exploration, bool controller,
                                    const PanelShortcutLayout& layout) {
-    ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "探索辅助");
+    ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), UiString(UiText::Exploration));
     // 名称与状态紧接显示，取消独立状态列；等待状态仍明确标识为未完成请求。
-    // 右列使用与宝箱快捷键相同的位置和高亮色，方向名称保留中文以避免箭头缺字。
+    // 右列使用与宝箱快捷键相同的位置和高亮色；方向名称随语言切换，不依赖箭头字形。
     if (BeginPanelShortcutColumns("ExplorationStatus", layout)) {
         const auto row = [](const char* name, bool available, bool enabled, bool pending,
                              bool requested, const char* key) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::Text("%s：", name);
-            const char* state = !available ? "不可用" : pending ? (requested ? "等待开启" : "等待关闭") :
-                                enabled ? "已开启" : "已关闭";
+            ImGui::Text(UiString(UiText::NameState), name);
+            const char* state = !available ? UiString(UiText::Unavailable) : pending ? (requested ? UiString(UiText::WaitingOn) : UiString(UiText::WaitingOff)) :
+                                enabled ? UiString(UiText::On) : UiString(UiText::Off);
             const ImVec4 color = !available || pending ? ImVec4(1, 0.74f, 0.34f, 1) :
                 enabled ? ImVec4(0.5f, 0.91f, 0.8f, 1) : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
             ImGui::SameLine(0.0f, 0.0f);
@@ -300,23 +415,23 @@ static void DrawExplorationStatus(const ExplorationStatus& exploration, bool con
             ImGui::TableNextColumn();
             ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "%s", key);
         };
-        row("地图全显", exploration.mapAvailable, exploration.mapEnabled, false, false,
-            controller ? "View + 十字键上" : "Ctrl + F6");
-        row("未到访传送点", exploration.travelAvailable, exploration.travelEnabled,
-            exploration.travelPending, exploration.travelRequested, controller ? "View + 十字键下" : "Ctrl + F8");
+        row(UiString(UiText::RevealMap), exploration.mapAvailable, exploration.mapEnabled, false, false,
+            controller ? UiString(UiText::DpadUp) : "Ctrl + F6");
+        row(UiString(UiText::UnvisitedTravel), exploration.travelAvailable, exploration.travelEnabled,
+            exploration.travelPending, exploration.travelRequested, controller ? UiString(UiText::DpadDown) : "Ctrl + F8");
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
-        ImGui::TextUnformatted("全传送清单");
+        ImGui::TextUnformatted(UiString(UiText::TravelList));
         ImGui::TableNextColumn();
         ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "%s",
-            controller ? "View + 十字键左" : "Ctrl + F10");
+            controller ? UiString(UiText::DpadLeft) : "Ctrl + F10");
         ImGui::EndTable();
     }
     // 底部只有一个提示槽：故障优先，其次等待，正常时才显示简短功能边界。
     // 完整功能范围和使用说明保留在文档中，不在每帧面板反复展开三到四段文字。
     const char* note = !exploration.mapAvailable || !exploration.travelAvailable ?
-        "功能校验未通过，详见 tracker.log。" : exploration.travelPending ?
-        "等待刷新：打开地图或结束确认/转场。" : "重启关闭；传送可能越过入口剧情。";
+        UiString(UiText::FeatureFailed) : exploration.travelPending ?
+        UiString(UiText::FeatureWaiting) : UiString(UiText::FeatureNote);
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("%s", note);
     ImGui::PopStyleColor();
@@ -328,14 +443,14 @@ static void DrawMapListShortcuts(bool controller) {
     const char* keys[] = {controller ? "View + X" : "F6", controller ? "View + Y" : "F10",
                           controller ? "View + A" : "F8", controller ? "View + LB" : "PgUp",
                           controller ? "View + RB" : "PgDn"};
-    const char* actions[] = {"切换模式", "全部/遗漏", "收起清单", "上一页", "下一页"};
+    const char* actions[] = {UiString(UiText::SwitchMode), UiString(UiText::Filter), UiString(UiText::CloseList), UiString(UiText::PreviousPage), UiString(UiText::NextPage)};
     float keyWidth = 0;
     for (const char* key : keys) keyWidth = std::max(keyWidth, ImGui::CalcTextSize(key).x);
     keyWidth += 8.0f;
     if (ImGui::BeginTable("MapListShortcuts", 3, ImGuiTableFlags_SizingStretchSame)) {
-        ImGui::TableSetupColumn("模式与上一页", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("筛选与下一页", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("收起清单", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("##mode_previous", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("##filter_next", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("##close", ImGuiTableColumnFlags_WidthStretch);
         for (unsigned i = 0; i < 5; ++i) {
             if (i % 3 == 0) ImGui::TableNextRow();
             ImGui::TableNextColumn();
@@ -357,16 +472,23 @@ static MapListLayout MeasureMapListLayout(bool controller) {
     const auto textWidth = [](const char* text) { return ImGui::CalcTextSize(text).x; };
     const auto& style = ImGui::GetStyle();
     MapListLayout layout;
-    layout.countWidth = std::max(textWidth("继承记录"), textWidth("566 / 566"));
-    layout.missingWidth = std::max(textWidth("完成"), textWidth("566"));
-    float pathWidth = textWidth("大地图 / 地点");
-    for (const auto& map : kMaps) pathWidth = std::max(pathWidth, textWidth(map.path));
+    layout.countWidth = std::max({textWidth(UiString(UiText::InheritedColumn)),
+        textWidth(UiString(UiText::ModeCurrent)), textWidth("566 / 566")});
+    layout.missingWidth = std::max({textWidth(UiString(UiText::Complete)),
+        textWidth(UiString(UiText::MissingColumn)), textWidth("566")});
+    float pathWidth = textWidth(UiString(UiText::PathColumn));
+    for (const auto& map : kMaps) pathWidth = std::max(pathWidth, textWidth(MapPath(map)));
     const float tableSpacing = style.CellPadding.x * 8;
     const float statisticsWidth = layout.countWidth * 2 + layout.missingWidth + tableSpacing;
+    float actionWidth = 0;
+    for (const auto id : {UiText::Filter, UiText::CloseList, UiText::SwitchMode, UiText::PreviousPage, UiText::NextPage})
+        actionWidth = std::max(actionWidth, textWidth(UiString(id)));
     const float shortcutWidth = (textWidth(controller ? "View + RB" : "PgDn") + 8.0f +
-        std::max(textWidth("全部/遗漏"), textWidth("收起清单"))) * 3 + style.CellPadding.x * 6;
-    const float summaryWidth = textWidth("已完成 59 / 59 张地图    剩余未开 566 个") +
-        style.ItemSpacing.x * 3 + textWidth("第 59 / 59 页");
+        actionWidth) * 3 + style.CellPadding.x * 6;
+    char summary[256]{}, pages[96]{};
+    std::snprintf(summary, sizeof(summary), UiString(UiText::MapSummary), 59u, 59u, 566u);
+    std::snprintf(pages, sizeof(pages), UiString(UiText::PageFormat), size_t{59}, size_t{59});
+    const float summaryWidth = textWidth(summary) + style.ItemSpacing.x * 3 + textWidth(pages);
     const float contentWidth = std::max({pathWidth + statisticsWidth + 8.0f, shortcutWidth, summaryWidth});
     layout.windowWidth = std::min(contentWidth + style.WindowPadding.x * 2 + 4.0f,
         std::min(1060.0f, ImGui::GetIO().DisplaySize.x - 32.0f));
@@ -387,7 +509,7 @@ static void DrawMapList(const Counts& counts, float left) {
     const auto& style = ImGui::GetStyle();
     float rowHeight = ImGui::GetTextLineHeight();
     for (const auto& map : counts.maps)
-        rowHeight = std::max(rowHeight, ImGui::CalcTextSize(map.definition->path, nullptr, false, layout.nameWidth).y);
+        rowHeight = std::max(rowHeight, ImGui::CalcTextSize(MapPath(*map.definition), nullptr, false, layout.nameWidth).y);
     rowHeight += style.CellPadding.y * 2;
     // 标题、筛选说明、两行快捷键及页脚说明预留固定高度；小窗口减少行数以免裁切。
     const auto rowsPerPage = static_cast<size_t>(std::max(1.0f,
@@ -407,30 +529,30 @@ static void DrawMapList(const Counts& counts, float left) {
     constexpr auto flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
     if (ImGui::Begin("Sky2MapProgress", nullptr, flags)) {
-        ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "各地图宝箱收集");
-        ImGui::Text("%s · %s", mode == Mode::Current ? "本周目" : "继承记录（多周目）",
-                    g_missingOnly ? "仅看有遗漏的地图" : "全部地图（有遗漏的在前）");
+        ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), UiString(UiText::MapTitle));
+        ImGui::Text("%s · %s", mode == Mode::Current ? UiString(UiText::ModeCurrent) : UiString(UiText::ModeInherited),
+                    g_missingOnly ? UiString(UiText::OnlyMissing) : UiString(UiText::AllMaps));
         if (!counts.valid) {
-            ImGui::TextDisabled("等待游戏数据……");
+            ImGui::TextDisabled(UiString(UiText::WaitingData));
         } else {
             // 页码与已完成统计共用一行，右边缘对齐内容区；先保存行尾，避免文字提交改变游标。
             // 宽度测量已为最长统计与页码留出间距；无游戏数据时不显示没有依据的页码。
             const float rowRight = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
-            ImGui::Text("已完成 %u / %u 张地图    剩余未开 %u 个", static_cast<unsigned>(complete),
+            ImGui::Text(UiString(UiText::MapSummary), static_cast<unsigned>(complete),
                         static_cast<unsigned>(counts.maps.size()), 566 - collected);
-            const std::string pageText = "第 " + std::to_string(g_mapPage + 1) + " / " +
-                std::to_string(pages) + " 页";
+            char pageText[96]{};
+            std::snprintf(pageText, sizeof(pageText), UiString(UiText::PageFormat), g_mapPage + 1, pages);
             ImGui::SameLine(0.0f, std::max(style.ItemSpacing.x,
-                rowRight - ImGui::GetItemRectMax().x - ImGui::CalcTextSize(pageText.c_str()).x));
-            ImGui::TextUnformatted(pageText.c_str());
+                rowRight - ImGui::GetItemRectMax().x - ImGui::CalcTextSize(pageText).x));
+            ImGui::TextUnformatted(pageText);
             ImGui::Separator();
             if (visible.empty()) {
-                ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "当前显示模式下，所有宝箱均已开。");
+                ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), UiString(UiText::AllOpened));
             } else if (ImGui::BeginTable("MapCounts", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
-                ImGui::TableSetupColumn("大地图 / 地点", ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn("本周目", ImGuiTableColumnFlags_WidthFixed, layout.countWidth);
-                ImGui::TableSetupColumn("继承记录", ImGuiTableColumnFlags_WidthFixed, layout.countWidth);
-                ImGui::TableSetupColumn("未开", ImGuiTableColumnFlags_WidthFixed, layout.missingWidth);
+                ImGui::TableSetupColumn(UiString(UiText::PathColumn), ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn(UiString(UiText::ModeCurrent), ImGuiTableColumnFlags_WidthFixed, layout.countWidth);
+                ImGui::TableSetupColumn(UiString(UiText::InheritedColumn), ImGuiTableColumnFlags_WidthFixed, layout.countWidth);
+                ImGui::TableSetupColumn(UiString(UiText::MissingColumn), ImGuiTableColumnFlags_WidthFixed, layout.missingWidth);
                 ImGui::TableHeadersRow();
                 const auto end = std::min(visible.size(), (g_mapPage + 1) * rowsPerPage);
                 for (size_t i = g_mapPage * rowsPerPage; i < end; ++i) {
@@ -439,7 +561,7 @@ static void DrawMapList(const Counts& counts, float left) {
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
                     ImGui::PushTextWrapPos(0.0f);
-                    ImGui::TextUnformatted(map.definition->path);
+                    ImGui::TextUnformatted(MapPath(*map.definition));
                     ImGui::PopTextWrapPos();
                     ImGui::TableNextColumn();
                     ImGui::Text("%u / %u", map.current, map.total);
@@ -447,7 +569,7 @@ static void DrawMapList(const Counts& counts, float left) {
                     ImGui::Text("%u / %u", map.inherited, map.total);
                     ImGui::TableNextColumn();
                     if (missing) ImGui::TextColored(ImVec4(1, 0.74f, 0.34f, 1), "%u", missing);
-                    else ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "完成");
+                    else ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), UiString(UiText::Complete));
                 }
                 ImGui::EndTable();
             }
@@ -455,7 +577,7 @@ static void DrawMapList(const Counts& counts, float left) {
         ImGui::Separator();
         DrawMapListShortcuts(controller);
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped("计数：已开 / 总数；道路单列，迷宫含各楼层，包含未到达地点。");
+        ImGui::TextWrapped(UiString(UiText::MapNote));
         ImGui::PopStyleColor();
     }
     ImGui::End();
@@ -463,19 +585,11 @@ static void DrawMapList(const Counts& counts, float left) {
 
 // 回访清单与地图收集清单互斥显示，沿用按键高亮和设备热切换风格。
 // 明确区分“请求已提交”和“已经到达”，不会把关图阶段冒充传送成功。
-// 出发点优先使用现有宝箱目录中的地区/地点名称；没有宝箱的城镇场景采用地区名
-// 加场景编号作补充识别。记录时间用于手动区分历史行程，不能冒充存档槽位标识。
+// 出发点优先按站位地点 ID 与场景匹配原生专名；无唯一匹配时退回唯一地图或地区。
+// 场景编号与记录时间补充识别历史行程，不能冒充存档槽位标识。
 static const char* ReturnPointName(const RevisitReturnPoint& point) {
-    for (const auto& map : kMaps) if (std::strcmp(map.scene, point.scene)==0) return map.path;
-    switch (point.region) {
-    case 1: return "洛连特地区";
-    case 2: return "柏斯地区";
-    case 3: return "卢安地区";
-    case 4: return "蔡斯地区";
-    case 5: return "格兰赛尔地区";
-    case 7: return "利贝尔方舟";
-    default: return "记录地点";
-    }
+    // 站位地点优先；同一原生场景包含多条道路时只退回地区，禁止显示第一条路名。
+    return ReturnPointDisplayName(point, kMaps);
 }
 static void DrawRevisitWindow(float left, bool controller) {
     if (!g_revisitWindow) return;
@@ -483,7 +597,18 @@ static void DrawRevisitWindow(float left, bool controller) {
     const auto status = ReadRevisitNativeStatus();
     const auto returnStatus = ReadRevisitReturnStatus(context);
     const auto& destination = RevisitDestinationAt(g_revisitSelection);
-    const float width = std::min(640.0f, ImGui::GetIO().DisplaySize.x - 32.0f);
+    // 从全部原生名称与完整快捷键测量，避免外文长名裁切，也避免翻页时窗口跳宽。
+    float contentWidth = 600.0f;
+    for (size_t i = 0; i < RevisitDestinationCount(); ++i) {
+        const auto& row = RevisitDestinationAt(i);
+        const std::string path = std::string("> ") + DestinationGroup(row) + " / " + DestinationName(row);
+        contentWidth = std::max(contentWidth, ImGui::CalcTextSize(path.c_str()).x);
+    }
+    const char* confirmKey = controller ? UiString(UiText::DpadRight) : "Ctrl + F10";
+    contentWidth = std::max(contentWidth, (ImGui::CalcTextSize(confirmKey).x + 12.0f +
+        ImGui::CalcTextSize(UiString(UiText::CycleRecord)).x + ImGui::GetStyle().CellPadding.x * 2) * 2);
+    const float width = std::min(contentWidth + ImGui::GetStyle().WindowPadding.x * 2 + 4.0f,
+        std::min(1040.0f, ImGui::GetIO().DisplaySize.x - 32.0f));
     const float x = std::max(16.0f, std::min(left, ImGui::GetIO().DisplaySize.x - width - 16.0f));
     ImGui::SetNextWindowPos(ImVec2(x, 22), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(width, 0), ImGuiCond_Always);
@@ -491,13 +616,13 @@ static void DrawRevisitWindow(float left, bool controller) {
         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
     if (ImGui::Begin("Sky2Revisit", nullptr, flags)) {
         const ImVec4 accent(0.5f, 0.91f, 0.8f, 1);
-        ImGui::TextColored(accent, "全传送清单");
+        ImGui::TextColored(accent, UiString(UiText::TravelList));
         ImGui::TextUnformatted(revisit_policy::kUnrestricted ?
-            "传送保留最初出发点。" : "按当前剧情开放；传送保留最初出发点。");
+            UiString(UiText::TravelOrigin) : UiString(UiText::TravelStoryOrigin));
         constexpr size_t rows=kRevisitRowsPerPage;
         const size_t page=g_revisitSelection/rows;
         char pages[48]{};
-        std::snprintf(pages,sizeof(pages),"第 %zu / %zu 页",page+1,(RevisitDestinationCount()+rows-1)/rows);
+        std::snprintf(pages,sizeof(pages),UiString(UiText::PageFormat),page+1,(RevisitDestinationCount()+rows-1)/rows);
         ImGui::SameLine(std::max(ImGui::GetCursorPosX(),width-ImGui::GetStyle().WindowPadding.x-ImGui::CalcTextSize(pages).x));
         ImGui::TextUnformatted(pages);
         ImGui::Separator();
@@ -507,67 +632,67 @@ static void DrawRevisitWindow(float left, bool controller) {
             const bool allowed=RevisitTargetAllowed(row.id,context);
             ImGui::PushStyleColor(ImGuiCol_Text,selected ? accent :
                 ImGui::GetStyleColorVec4(allowed ? ImGuiCol_Text : ImGuiCol_TextDisabled));
-            ImGui::Text("%s %s / %s",selected ? ">" : " ",row.group,row.name);
+            ImGui::TextWrapped("%s %s / %s", selected ? ">" : " ", DestinationGroup(row), DestinationName(row));
             ImGui::PopStyleColor();
         }
         ImGui::Separator();
         if (destination.id==108)
-            ImGui::TextWrapped("克雷德尔居住区：传送后可步行进入市政府，补取遗漏宝箱。");
+            ImGui::TextWrapped("%s", UiString(UiText::BuildingNote));
         if (destination.id==forest::kTarget)
-            ImGui::TextWrapped("迷途之森没有普通出口；请使用记录的出发点返程。");
+            ImGui::TextWrapped("%s", UiString(UiText::ForestNote));
         if (returnStatus.hasRecord) {
             const auto& record=returnStatus.record;
             const time_t stamp=static_cast<time_t>(record.createdUnixSeconds);
             tm local{}; char date[48]{};
             if (localtime_s(&local,&stamp)==0) std::strftime(date,sizeof(date),"%m-%d %H:%M:%S",&local);
-            ImGui::TextWrapped("%s：%s",returnStatus.active ? "最初出发点" : "历史返程候选",ReturnPointName(record.point));
-            ImGui::TextDisabled("%s  ·  %s  ·  记录 %zu / %zu",record.point.scene,date,returnStatus.index+1,returnStatus.count);
-        } else ImGui::TextDisabled("首次出发前自动记录场景、站立坐标与朝向。");
+            ImGui::TextWrapped("%s: %s",returnStatus.active ? UiString(UiText::OriginalPoint) : UiString(UiText::HistoryCandidate),ReturnPointName(record.point));
+            ImGui::TextDisabled(UiString(UiText::RecordFormat),record.point.scene,date,returnStatus.index+1,returnStatus.count);
+        } else ImGui::TextDisabled(UiString(UiText::RecordAuto));
         const char* message = nullptr;
-        if (!RevisitReady() || !context.available) message = "回访保护或原生入口校验未通过，暂不可用。";
-        else if (status.phase == RevisitNativePhase::Queued) message = "请求已提交，等待原生地图线程核对……";
-        else if (status.phase == RevisitNativePhase::ClosingMap) message = "原生地图正在关闭，等待换图……";
-        else if (status.phase == RevisitNativePhase::Dispatched) message = "正在换图，等待实际到达确认……";
-        else if (!context.valid) message = "等待游戏场景数据……";
-        else if (!RevisitContextAllowed(context)) message = "当前场景或章节数据尚未支持。";
-        else if (!context.browsing || context.busy) message = "请打开游戏地图，退出子窗口并等待地图动画结束。";
+        if (!RevisitReady() || !context.available) message = UiString(UiText::TravelUnavailable);
+        else if (status.phase == RevisitNativePhase::Queued) message = UiString(UiText::TravelQueued);
+        else if (status.phase == RevisitNativePhase::ClosingMap) message = UiString(UiText::TravelClosing);
+        else if (status.phase == RevisitNativePhase::Dispatched) message = UiString(UiText::TravelDispatched);
+        else if (!context.valid) message = UiString(UiText::WaitingScene);
+        else if (!RevisitContextAllowed(context)) message = UiString(UiText::SceneUnsupported);
+        else if (!context.browsing || context.busy) message = UiString(UiText::OpenTravelMap);
         else if (!RevisitTargetAllowed(destination.id,context)) {
             if (destination.id==kRevisitReturnTarget)
                 message=returnStatus.hasRecord ? (revisit_policy::kUnrestricted ?
-                    "返程地点数据尚未通过校验，请核对所选记录。" :
-                    "当前剧情暂不允许返回此地点，请先完成游戏原生传送剧情。") :
-                    "没有本章节的返程记录；请读取正常地区存档后出发。";
+                    UiString(UiText::ReturnInvalid) :
+                    UiString(UiText::ReturnStoryBlocked)) :
+                    UiString(UiText::ReturnMissing);
 
-            else if (!returnStatus.storageReady) message="返程记录无法安全保存，本次出发已阻止。";
-            else if (RevisitRecoveryRequired(context) && !returnStatus.active) message="重启或读档后，请先选择历史返程点返回，再开始新回访。";
+            else if (!returnStatus.storageReady) message=UiString(UiText::RecordStorageFailed);
+            else if (RevisitRecoveryRequired(context) && !returnStatus.active) message=UiString(UiText::ReturnFirst);
             else if (!revisit_policy::kUnrestricted && context.beforeScriptReturnBlocked && !returnStatus.active)
-                message="当前传送由剧情接管，请先使用游戏原生传送继续剧情。";
+                message=UiString(UiText::StoryOwnsTravel);
             else if (!context.returnPointReady && !returnStatus.active)
-                message="当前站位尚无法安全记录，暂不能传送。";
+                message=UiString(UiText::PositionNotReady);
             else message=RevisitNativeTargetReason(destination.id,context);
         } else if (g_revisitConfirmation.Armed(destination.id, GetTickCount64()))
             message = destination.id==kRevisitReturnTarget ?
-                "核对上方地点和时间，再按一次确认返程；记录不绑定存档槽位。" : "再次按确认组合键前往所选地点（8 秒内有效）。";
+                UiString(UiText::ConfirmReturn) : UiString(UiText::ConfirmTravel);
         else if (status.phase == RevisitNativePhase::ArrivalUnconfirmed)
-            message = "上次到达未能自动确认，出发点已保留；现在可重新选择传送或返程。";
+            message = UiString(UiText::ArrivalUnconfirmed);
         else if (g_revisitSubmissionRejected || status.phase == RevisitNativePhase::Rejected || status.phase == RevisitNativePhase::Expired)
-            message = "上次请求未确认成功；原返程记录保留，请重新打开地图核对。";
-        else message = "就绪，请选择目的地。";
+            message = UiString(UiText::RequestUnconfirmed);
+        else message = UiString(UiText::TravelReady);
         ImGui::TextWrapped("%s", message);
         // 两列按操作配对：上一页/下一页、上一项/下一项、确认/收起。
         // 各列独立测量完整组合键，既保留高亮与热切换，又避免最长手柄文字挤到相邻列。
         const char* revisitKeys[] = {controller ? "View + LB" : "PgUp",
             controller ? "View + RB" : "PgDn", controller ? "View + LT" : "Ctrl + PgUp",
-            controller ? "View + RT" : "Ctrl + PgDn", controller ? "View + 十字键右" : "Ctrl + F7",
-            controller ? "View + 十字键左" : "Ctrl + F10", controller ? "View + Y" : "F10"};
-        const char* revisitActions[] = {"上一页", "下一页", "上一项", "下一项", "确认", "收起清单", "切换返程记录"};
+            controller ? "View + RT" : "Ctrl + PgDn", controller ? UiString(UiText::DpadRight) : "Ctrl + F7",
+            controller ? UiString(UiText::DpadLeft) : "Ctrl + F10", controller ? "View + Y" : "F10"};
+        const char* revisitActions[] = {UiString(UiText::PreviousPage), UiString(UiText::NextPage), UiString(UiText::PreviousItem), UiString(UiText::NextItem), UiString(UiText::Confirm), UiString(UiText::CloseList), UiString(UiText::CycleRecord)};
         const unsigned shortcutCount = destination.id==kRevisitReturnTarget && !returnStatus.active && returnStatus.count>1 ? 7 : 6;
         float keyWidths[2]{};
         for (unsigned i=0;i<shortcutCount;++i)
             keyWidths[i%2] = std::max(keyWidths[i%2], ImGui::CalcTextSize(revisitKeys[i]).x + 12.0f);
         if (ImGui::BeginTable("RevisitShortcuts", 2, ImGuiTableFlags_SizingStretchSame)) {
-            ImGui::TableSetupColumn("上一页与确认", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("下一页与收起", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("##previous_confirm", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("##next_close", ImGuiTableColumnFlags_WidthStretch);
             for (unsigned i=0;i<shortcutCount;++i) {
                 if (i%2==0) ImGui::TableNextRow();
                 ImGui::TableNextColumn();
@@ -576,7 +701,7 @@ static void DrawRevisitWindow(float left, bool controller) {
             ImGui::EndTable();
         }
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped("打开游戏地图，选好地点后确认两次；末页可返程。");
+        ImGui::TextWrapped(UiString(UiText::TravelNote));
         ImGui::PopStyleColor();
     }
     ImGui::End();
@@ -603,22 +728,29 @@ static void DrawPanel() {
         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
     float panelRight = 330;
     if (ImGui::Begin("Sky2ChestTracker", nullptr, flags)) {
-        ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), "宝箱追踪  ·  0.5.0");
-        if (!enabled) ImGui::TextColored(ImVec4(1, 0.72f, 0.3f, 1), "宝箱标记已暂停（原版显示）");
-        else ImGui::Text("显示模式：%s", current ? "本周目" : "继承记录（多周目）");
+        ImGui::TextColored(ImVec4(0.5f, 0.91f, 0.8f, 1), UiString(UiText::Title));
+        // 缺少相应字库时使用能显示的英文说明，不以默认问号冒充语言支持已经完整可用。
+        const auto language = static_cast<unsigned>(CurrentLanguage());
+        if (language < kLanguageCount && !g_languageFontComplete[language]) {
+            const char* names[] = {"Simplified Chinese", "Japanese", "English", "Traditional Chinese",
+                                   "German", "French", "Spanish", "Korean"};
+            ImGui::TextWrapped("Font glyphs missing for %s. Install matching Windows supplemental fonts.", names[language]);
+        }
+        if (!enabled) ImGui::TextColored(ImVec4(1, 0.72f, 0.3f, 1), UiString(UiText::Paused));
+        else ImGui::Text(UiString(UiText::ModeLabel), current ? UiString(UiText::ModeCurrent) : UiString(UiText::ModeInherited));
         ImGui::Separator();
         if (counts.valid) {
-            ImGui::Text("本周目已开  %u / 566", counts.current);
-            ImGui::Text("继承记录已开  %u / 566", counts.inherited);
+            ImGui::Text(UiString(UiText::CurrentOpened), counts.current);
+            ImGui::Text(UiString(UiText::InheritedOpened), counts.inherited);
             if (!counts.map.empty()) {
                 // 两组地区进度同时呈现，与上方全局计数保持一致；切换显示模式不隐藏其中一组。
-                ImGui::Text("本周目当前地区已开  %u / %u", counts.map_current, counts.map_total);
-                ImGui::Text("继承记录当前地区已开  %u / %u", counts.map_inherited, counts.map_total);
-                ImGui::TextDisabled("地区统计包含相邻道路");
-            } else ImGui::TextDisabled("打开区域地图后显示两组地区统计");
-        } else ImGui::TextDisabled("等待游戏数据……");
+                ImGui::Text(UiString(UiText::AreaCurrent), counts.map_current, counts.map_total);
+                ImGui::Text(UiString(UiText::AreaInherited), counts.map_inherited, counts.map_total);
+                ImGui::TextDisabled(UiString(UiText::AreaNote));
+            } else ImGui::TextDisabled(UiString(UiText::OpenAreaMap));
+        } else ImGui::TextDisabled(UiString(UiText::WaitingData));
         ImGui::Separator();
-        ImGui::Text("闭合箱标：未开    开启箱标：已开");
+        ImGui::Text(UiString(UiText::MarkerLegend));
         DrawChestShortcuts(controller, shortcuts);
         ImGui::Separator();
         DrawExplorationStatus(exploration, controller, shortcuts);
@@ -641,6 +773,8 @@ static HRESULT WINAPI Present(IDXGISwapChain* swap, UINT interval, UINT options)
                 swap->GetDesc(&description);
                 if (description.OutputWindow == g_window) {
                     ImGui::SetCurrentContext(g_context);
+                    // 读取游戏当前文本语言，而非 Windows/Steam 语言；内部节流，不改写游戏配置。
+                    RefreshGameLanguage();
                     HandleKeys();
                     // 使用实际后缓冲尺寸，避免窗口坐标、Windows DPI 与渲染分辨率不一致。
                     // 查询后立即释放引用，保持 ResizeBuffers 可用。

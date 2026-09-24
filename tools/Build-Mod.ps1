@@ -48,3 +48,4 @@ if ($LASTEXITCODE -ne 0) { throw 'C++ 测试失败，禁止发布。' }
 & $pythonCommand -m unittest discover -s (Join-Path $projectRoot 'tests') -p 'test_public_*.py' -v
 if ($LASTEXITCODE -ne 0) { throw 'Python 测试失败，禁止发布。' }
 Write-Output "构建完成：$(Join-Path $BuildDirectory 'xinput1_4.dll')"
+Write-Output "插件版：$(Join-Path $BuildDirectory 'Sky2ChestTracker.asi')"

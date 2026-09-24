@@ -7,8 +7,13 @@ static HMODULE SystemXInput() noexcept {
     static HMODULE module = nullptr;
     static std::once_flag once;
     try { std::call_once(once, [] {
-        // 强制从 System32 加载，避免再次加载游戏目录内的代理 DLL。
-        module = LoadLibraryExW(L"xinput1_4.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        // 必须使用系统 DLL 的绝对路径。同名代理已经加载时，仅提供 basename 和
+        // SEARCH_SYSTEM32 仍可能命中已加载模块，造成转发再次回到自己。
+        wchar_t directory[MAX_PATH]{};
+        const UINT length = GetSystemDirectoryW(directory, MAX_PATH);
+        if (length == 0 || length >= MAX_PATH) return;
+        const std::wstring path = std::wstring(directory) + L"\\xinput1_4.dll";
+        module = LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     }); } catch (...) {}
     return module;
 }

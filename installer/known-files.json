@@ -1,0 +1,173 @@
+{
+  "schema": 1,
+  "files": [
+    {
+      "path": "xinput1_4.dll",
+      "sha256": "9174bf81dca33082a3db9d663ea9ee5f660011a0489528584edd360222dc74b6",
+      "product": "Sky2ChestTracker",
+      "type": "standalone-proxy"
+    },
+    {
+      "path": "Sky2ChestTracker/LICENSE",
+      "sha256": "d5d4ccf236c22eede0d16c8e59b3a250321ae6688b00d79014a7b82f434c2e9c",
+      "product": "Sky2ChestTracker",
+      "type": "standalone-proxy"
+    },
+    {
+      "path": "Sky2ChestTracker/THIRD_PARTY_NOTICES.md",
+      "sha256": "d592eb4c13feb7d63a341b89fccde2436358e2dba08f134809cc77438a0a54d0",
+      "product": "Sky2ChestTracker",
+      "type": "standalone-proxy"
+    },
+    {
+      "path": "Sky2ChestTracker/licenses/Dear-ImGui.txt",
+      "sha256": "f20418b409e53c8c9f4e90917ff395554a60320d4dfbf833da89b339cad8628a",
+      "product": "Sky2ChestTracker",
+      "type": "standalone-proxy"
+    },
+    {
+      "path": "Sky2ChestTracker/licenses/ED9ModManager.txt",
+      "sha256": "b71d4190c9168b0ce5a16ee804a0f72ff0fcaef219f771e07daa2a4e6cdd1998",
+      "product": "Sky2ChestTracker",
+      "type": "standalone-proxy"
+    },
+    {
+      "path": "Sky2ChestTracker/licenses/MinHook.txt",
+      "sha256": "4f21f857550d7be854da6ea5f2da4e6775ca4e3fbb535e4f3d961c47d0bf3335",
+      "product": "Sky2ChestTracker",
+      "type": "standalone-proxy"
+    },
+    {
+      "path": "plugins/Sky2ChestTracker.asi",
+      "sha256": "bff03dbc31b044c6177387450457862c8b1f61a9ceec290eac1a55e82d35877a",
+      "product": "Sky2ChestTracker",
+      "type": "asi-plugin"
+    },
+    {
+      "path": "Sky2Mods/Sky2ChestTracker/LICENSE",
+      "sha256": "d5d4ccf236c22eede0d16c8e59b3a250321ae6688b00d79014a7b82f434c2e9c",
+      "product": "Sky2ChestTracker",
+      "type": "asi-plugin"
+    },
+    {
+      "path": "Sky2Mods/Sky2ChestTracker/THIRD_PARTY_NOTICES.md",
+      "sha256": "d592eb4c13feb7d63a341b89fccde2436358e2dba08f134809cc77438a0a54d0",
+      "product": "Sky2ChestTracker",
+      "type": "asi-plugin"
+    },
+    {
+      "path": "Sky2Mods/Sky2ChestTracker/licenses/Dear-ImGui.txt",
+      "sha256": "f20418b409e53c8c9f4e90917ff395554a60320d4dfbf833da89b339cad8628a",
+      "product": "Sky2ChestTracker",
+      "type": "asi-plugin"
+    },
+    {
+      "path": "Sky2Mods/Sky2ChestTracker/licenses/ED9ModManager.txt",
+      "sha256": "b71d4190c9168b0ce5a16ee804a0f72ff0fcaef219f771e07daa2a4e6cdd1998",
+      "product": "Sky2ChestTracker",
+      "type": "asi-plugin"
+    },
+    {
+      "path": "Sky2Mods/Sky2ChestTracker/licenses/MinHook.txt",
+      "sha256": "4f21f857550d7be854da6ea5f2da4e6775ca4e3fbb535e4f3d961c47d0bf3335",
+      "product": "Sky2ChestTracker",
+      "type": "asi-plugin"
+    },
+    {
+      "path": "xinput1_4.dll",
+      "sha256": "031a3e5576d91dce1e438d36b9a3d462c7334ab4791990a8ff1e3ddc0e132daf",
+      "product": "UltimateASILoader",
+      "type": "asi-loader"
+    },
+    {
+      "path": "Sky2ModLoader/LICENSE.txt",
+      "sha256": "a6317fe5f4c2bdf2ab01abf555f5276956cdf5266abdec311123832129357ec4",
+      "product": "UltimateASILoader",
+      "type": "asi-loader"
+    },
+    {
+      "path": "xinput1_4.dll",
+      "sha256": "0158e97796de4626e33e2d85f0c6bb92785c556f2bde2f766a5884a0f39c15e6",
+      "product": "Sky2ChestTracker",
+      "type": "standalone-proxy"
+    },
+    {
+      "path": "Sky2ChestTracker/README.md",
+      "sha256": "bd0c39959d6265fdbd82bd32868a9d4f6ce017e6263ebebbb6b62b34f9b5bedd",
+      "product": "Sky2ChestTracker",
+      "type": "standalone-proxy"
+    },
+    {
+      "path": "Sky2ChestTracker/CHANGELOG.md",
+      "sha256": "dcaee8be830985b8823021953061c8e20fa2a8a273095456da9c43e487e33dd6",
+      "product": "Sky2ChestTracker",
+      "type": "standalone-proxy"
+    },
+    {
+      "path": "Sky2ChestTracker/CONTRIBUTING.md",
+      "sha256": "20358dd3a3be2c405737c39ce800c64a2caf1e5a18f0cbcb340bd22a9b1549bf",
+      "product": "Sky2ChestTracker",
+      "type": "standalone-proxy"
+    },
+    {
+      "path": "Sky2ChestTracker/docs/BUILDING.md",
+      "sha256": "f2397439afb5f43ee72593e0b08812d8d4830b4de00b527f766541be0bddf0a6",
+      "product": "Sky2ChestTracker",
+      "type": "standalone-proxy"
+    },
+    {
+      "path": "Sky2ChestTracker/docs/ARCHITECTURE.md",
+      "sha256": "547e073e6b5982ef777766a054a3842e14258edd4502b1f79134e6be33ac45fd",
+      "product": "Sky2ChestTracker",
+      "type": "standalone-proxy"
+    },
+    {
+      "path": "Sky2ChestTracker/docs/TESTING.md",
+      "sha256": "492764d88b31ce3b5bd834a51cf2d9fef6ad6ea7af7651a440155966ba02b6d4",
+      "product": "Sky2ChestTracker",
+      "type": "standalone-proxy"
+    },
+    {
+      "type": "asi-plugin",
+      "product": "Sky2ChestTracker",
+      "path": "plugins/Sky2ChestTracker.asi",
+      "sha256": "95d5a43ff031f4b2c26fc2b24b12b519f2dd362c63868310877c65b838f671ac"
+    },
+    {
+      "type": "standalone-proxy",
+      "product": "Sky2ChestTracker",
+      "path": "xinput1_4.dll",
+      "sha256": "34e33be98bf050532479b103c0515158aff2761552e0a80f44dcf410686cf67d"
+    },
+    {
+      "type": "standalone-proxy",
+      "product": "Sky2ChestTracker",
+      "path": "Sky2ChestTracker/LICENSES.txt",
+      "sha256": "174228556eb6b1200d2ae0372c490687ca3d52b79a268a4bb5cd90cd308b89bd"
+    },
+    {
+      "type": "asi-plugin",
+      "product": "Sky2ChestTracker",
+      "path": "plugins/Sky2ChestTracker/LICENSES.txt",
+      "sha256": "174228556eb6b1200d2ae0372c490687ca3d52b79a268a4bb5cd90cd308b89bd"
+    },
+    {
+      "type": "asi-loader",
+      "product": "UltimateASILoader",
+      "path": "plugins/Sky2ChestTracker/UltimateASILoader.LICENSE.txt",
+      "sha256": "a6317fe5f4c2bdf2ab01abf555f5276956cdf5266abdec311123832129357ec4"
+    },
+    {
+      "type": "standalone-proxy",
+      "product": "Sky2ChestTracker",
+      "path": "xinput1_4.dll",
+      "sha256": "fd67d2d44dd309e1e3ade6d1257da1045c4e2e44ec01040a246abda092656725"
+    },
+    {
+      "type": "asi-plugin",
+      "product": "Sky2ChestTracker",
+      "path": "plugins/Sky2ChestTracker.asi",
+      "sha256": "19c07af60655c538c2bd389d98ab7ba5d129e5e18f161a331cbfcade9d966727"
+    }
+  ]
+}

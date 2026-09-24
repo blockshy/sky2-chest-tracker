@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Sky2ChestTracker VERSION 0.5.0 LANGUAGES C CXX)
+project(Sky2ChestTracker VERSION 0.6.0 LANGUAGES C CXX)
 
 # 关闭 DLL 构建时，仅运行纯逻辑测试；CI 不需要下载或持有游戏资源。
 option(SKY2_BUILD_MOD "构建 Windows 游戏插件" ON)
@@ -15,7 +15,8 @@ include(CTest)
 # 显式登记头文件，防止中文 MSVC 的包含文件输出解析异常导致复用陈旧对象。
 # 发布脚本另执行 clean-first；上游依赖固定到已记录的提交。
 set(TRACKER_LOCAL_HEADERS
-    native/core.h native/progress.h native/tracker.h native/log.h native/controller_logic.h native/input_bridge.h native/ui_scale.h
+    native/core.h native/progress.h native/tracker.h native/log.h native/runtime_files.h native/controller_logic.h native/input_bridge.h native/ui_scale.h
+    native/localization.h native/localized_names.h native/game_language.h native/ui_text.h
     native/exploration.h native/exploration_logic.h native/travel_refresh.h native/travel_menu.h
     native/revisit.h native/revisit_catalog.h native/revisit_logic.h native/revisit_native.h native/revisit_event_guard.h
     native/revisit_event_guard_rules.h native/revisit_return_point.h native/revisit_journal.h
@@ -31,14 +32,21 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/generated/chest_catalog.h" AND
     list(APPEND TRACKER_LOCAL_HEADERS
         "${CMAKE_CURRENT_SOURCE_DIR}/data/generated/chest_catalog.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/data/generated/map_catalog.h")
+    # 八语表属于本机游戏派生资源；明确追踪依赖，语言名称更新必须触发重新编译。
+    foreach(catalog map_localization.h travel_localization.h)
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/generated/${catalog}")
+            list(APPEND TRACKER_LOCAL_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/data/generated/${catalog}")
+        endif()
+    endforeach()
 endif()
 set_source_files_properties(
-    native/tracker.cpp native/overlay.cpp native/input_bridge.cpp native/xinput_proxy.cpp native/exploration.cpp
+    native/tracker.cpp native/runtime_files_win.cpp native/overlay.cpp native/game_language.cpp native/input_bridge.cpp native/xinput_proxy.cpp native/plugin_entry.cpp native/exploration.cpp
     native/revisit.cpp native/revisit_native.cpp native/revisit_event_guard.cpp native/revisit_forest.cpp
     native/revisit_journal_win.cpp tests/revisit_journal_io_tests.cpp tests/revisit_tests.cpp tests/revisit_catalog_tests.cpp
     tests/revisit_event_guard_tests.cpp tests/revisit_event_guard_abi_tests.cpp tests/revisit_native_abi_tests.cpp
     tests/revisit_forest_tests.cpp tests/revisit_forest_abi_tests.cpp
-    tests/core_tests.cpp tests/controller_tests.cpp tests/ui_scale_tests.cpp tests/exploration_tests.cpp tests/travel_refresh_tests.cpp
+    tests/core_tests.cpp tests/runtime_files_tests.cpp tests/runtime_files_io_tests.cpp tests/controller_tests.cpp tests/ui_scale_tests.cpp tests/exploration_tests.cpp tests/travel_refresh_tests.cpp
+    tests/language_tests.cpp tests/localized_names_tests.cpp tests/ui_text_tests.cpp
     PROPERTIES OBJECT_DEPENDS "${TRACKER_LOCAL_HEADERS}")
 
 if(SKY2_BUILD_MOD)
@@ -49,6 +57,10 @@ if(SKY2_BUILD_MOD)
     enable_language(ASM_MASM)
     if(NOT SKY2_HAVE_CATALOG OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/generated/travel_catalog.h")
         message(FATAL_ERROR "Missing local game catalog. Run tools/Build-Mod.ps1 -GamePath <game directory>.")
+    endif()
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/generated/map_localization.h" OR
+       NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/generated/travel_localization.h")
+        message(FATAL_ERROR "Missing native-language catalogs. Regenerate map and travel catalogs from your game.")
     endif()
     if(NOT EXISTS "${SKY2_DEPS_DIR}/minhook/CMakeLists.txt" OR NOT EXISTS "${SKY2_DEPS_DIR}/imgui/imgui.cpp")
         message(FATAL_ERROR "Missing dependencies. Run tools/Setup-Dependencies.ps1.")
@@ -63,22 +75,37 @@ if(SKY2_BUILD_MOD)
         "${SKY2_DEPS_DIR}/imgui/backends/imgui_impl_dx11.cpp"
         "${SKY2_DEPS_DIR}/imgui/backends/imgui_impl_win32.cpp")
     target_include_directories(tracker_imgui PUBLIC "${SKY2_DEPS_DIR}/imgui" "${SKY2_DEPS_DIR}/imgui/backends")
-    add_library(Sky2ChestTracker SHARED
-        native/tracker.cpp native/overlay.cpp native/input_bridge.cpp native/xinput_proxy.cpp native/xinput_proxy.def
+    # 两种分发共用完全相同的功能对象，只有加载入口不同；避免独立维护两套游戏逻辑。
+    # 独立版仍由 XInput 代理启动；插件版由 UAL 的 InitializeASI 启动。
+    add_library(tracker_runtime OBJECT
+        native/tracker.cpp native/runtime_files_win.cpp native/overlay.cpp native/game_language.cpp native/input_bridge.cpp
         native/exploration.cpp native/exploration_shims.asm
         native/revisit.cpp native/revisit_native.cpp native/revisit_native_shims.asm
         native/revisit_event_guard.cpp native/revisit_event_guard.asm
         native/revisit_forest.cpp native/revisit_forest.asm
         native/revisit_journal.cpp native/revisit_journal_win.cpp)
-    target_include_directories(Sky2ChestTracker PRIVATE native data/generated)
-    target_compile_definitions(Sky2ChestTracker PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-    target_compile_definitions(Sky2ChestTracker PRIVATE SKY2_UNRESTRICTED_TRAVEL=$<BOOL:${SKY2_UNRESTRICTED_TRAVEL}>)
-    target_compile_options(Sky2ChestTracker PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/utf-8;/W4;/EHsc>)
-    target_link_libraries(Sky2ChestTracker PRIVATE minhook tracker_imgui d3d11 dxgi d3dcompiler bcrypt)
+    target_include_directories(tracker_runtime PRIVATE native data/generated)
+    target_compile_definitions(tracker_runtime PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_compile_definitions(tracker_runtime PRIVATE SKY2_UNRESTRICTED_TRAVEL=$<BOOL:${SKY2_UNRESTRICTED_TRAVEL}>)
+    target_compile_options(tracker_runtime PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/utf-8;/W4;/EHsc>)
+    target_link_libraries(tracker_runtime PRIVATE minhook tracker_imgui)
+    add_library(Sky2ChestTracker SHARED native/xinput_proxy.cpp native/xinput_proxy.def $<TARGET_OBJECTS:tracker_runtime>)
+    add_library(Sky2ChestTrackerAsi SHARED native/plugin_entry.cpp $<TARGET_OBJECTS:tracker_runtime>)
+    foreach(target Sky2ChestTracker Sky2ChestTrackerAsi)
+        target_include_directories(${target} PRIVATE native data/generated)
+        target_compile_definitions(${target} PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+        target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/utf-8;/W4;/EHsc>)
+        target_link_libraries(${target} PRIVATE minhook tracker_imgui d3d11 dxgi d3dcompiler bcrypt)
+    endforeach()
     set_target_properties(Sky2ChestTracker PROPERTIES OUTPUT_NAME xinput1_4 PREFIX "")
+    set_target_properties(Sky2ChestTrackerAsi PROPERTIES OUTPUT_NAME Sky2ChestTracker PREFIX "" SUFFIX ".asi")
 endif()
 
 if(BUILD_TESTING)
+    if(WIN32 AND MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+        # 隔离宿主和诊断插件不进入玩家正式包；真实 UAL 由独立集成脚本按固定版本验证。
+        add_subdirectory(tests/asi)
+    endif()
     # 有本机目录时额外检查 59 地图、566 箱；无目录时仍验证位标志与跨周目图标语义。
     add_executable(tracker_core_tests tests/core_tests.cpp)
     target_include_directories(tracker_core_tests PRIVATE native)
@@ -90,6 +117,22 @@ if(BUILD_TESTING)
     target_include_directories(tracker_controller_tests PRIVATE native)
     add_executable(tracker_ui_scale_tests tests/ui_scale_tests.cpp)
     target_include_directories(tracker_ui_scale_tests PRIVATE native)
+    add_executable(tracker_ui_text_tests tests/ui_text_tests.cpp)
+    target_include_directories(tracker_ui_text_tests PRIVATE native)
+    add_executable(tracker_localized_names_tests tests/localized_names_tests.cpp)
+    target_include_directories(tracker_localized_names_tests PRIVATE native)
+    if(SKY2_HAVE_CATALOG)
+        target_include_directories(tracker_localized_names_tests PRIVATE data/generated)
+    endif()
+    # 原生枚举映射可跨平台验证；Windows 另链接只读检测层并用合成内存验证失效指针。
+    add_executable(tracker_language_tests tests/language_tests.cpp)
+    target_include_directories(tracker_language_tests PRIVATE native)
+    if(WIN32)
+        target_sources(tracker_language_tests PRIVATE native/game_language.cpp)
+        target_compile_definitions(tracker_language_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+    add_executable(tracker_runtime_files_tests tests/runtime_files_tests.cpp)
+    target_include_directories(tracker_runtime_files_tests PRIVATE native)
     add_executable(tracker_exploration_tests tests/exploration_tests.cpp)
     target_include_directories(tracker_exploration_tests PRIVATE native)
     add_executable(tracker_travel_refresh_tests tests/travel_refresh_tests.cpp)
@@ -109,7 +152,7 @@ if(BUILD_TESTING)
     target_include_directories(tracker_revisit_journal_tests PRIVATE native)
     set_source_files_properties(tests/revisit_journal_tests.cpp native/revisit_journal.cpp PROPERTIES
         OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/native/revisit_journal.h;${CMAKE_CURRENT_SOURCE_DIR}/native/revisit_return_point.h")
-    foreach(target tracker_core_tests tracker_controller_tests tracker_ui_scale_tests tracker_exploration_tests tracker_travel_refresh_tests tracker_revisit_tests tracker_revisit_catalog_tests tracker_revisit_event_guard_tests tracker_revisit_forest_tests tracker_revisit_journal_tests)
+    foreach(target tracker_core_tests tracker_controller_tests tracker_ui_scale_tests tracker_ui_text_tests tracker_localized_names_tests tracker_language_tests tracker_runtime_files_tests tracker_exploration_tests tracker_travel_refresh_tests tracker_revisit_tests tracker_revisit_catalog_tests tracker_revisit_event_guard_tests tracker_revisit_forest_tests tracker_revisit_journal_tests)
         target_compile_definitions(${target} PRIVATE SKY2_UNRESTRICTED_TRAVEL=0)
         if(MSVC)
             target_compile_options(${target} PRIVATE /utf-8 /W4)
@@ -124,10 +167,11 @@ if(BUILD_TESTING)
             native/revisit_journal.cpp native/revisit_journal_win.cpp)
         add_executable(tracker_revisit_session_tests tests/revisit_session_tests.cpp)
         add_executable(tracker_revisit_session_unrestricted_tests tests/revisit_session_tests.cpp)
+        add_executable(tracker_runtime_files_io_tests tests/runtime_files_io_tests.cpp native/runtime_files_win.cpp)
         target_compile_definitions(tracker_revisit_journal_io_tests PRIVATE SKY2_UNRESTRICTED_TRAVEL=0)
         target_compile_definitions(tracker_revisit_session_tests PRIVATE SKY2_UNRESTRICTED_TRAVEL=0)
         target_compile_definitions(tracker_revisit_session_unrestricted_tests PRIVATE SKY2_UNRESTRICTED_TRAVEL=1)
-        foreach(target tracker_revisit_journal_io_tests tracker_revisit_session_tests tracker_revisit_session_unrestricted_tests)
+        foreach(target tracker_revisit_journal_io_tests tracker_revisit_session_tests tracker_revisit_session_unrestricted_tests tracker_runtime_files_io_tests)
             target_include_directories(${target} PRIVATE native)
             target_compile_definitions(${target} PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
             target_compile_options(${target} PRIVATE /utf-8 /W4 /EHsc)

@@ -342,7 +342,22 @@ int RunUnrestricted(Fixture& f) {
     f.Reset();testForestGuardReady=false;
     Check(!tracker::RevisitNativeTargetAvailable(tracker::forest::kTarget,tracker::ReadRevisitNativeContext()),"experiment still refuses missing forest protection");
     Check(std::strcmp(tracker::RevisitNativeTargetReason(tracker::forest::kTarget,tracker::ReadRevisitNativeContext()),
-          "迷途之森剧情保护尚未就绪")==0,"experimental forest reason identifies missing guard rather than story completion");
+          "该地点的剧情保护尚未就绪")==0,"experimental forest reason identifies missing guard rather than story completion");
+    // 语言只影响提示，保护缺失仍必须拒绝传送；不得为生成译名触发任何原生加载。
+    const char* const localizedGuardReasons[]{
+        "该地点的剧情保护尚未就绪", "この場所のイベント保護が準備できていません",
+        "Event protection for this location is not ready", "該地點的劇情保護尚未就緒",
+        "Ereignisschutz für diesen Ort ist noch nicht bereit", "La protection des événements de ce lieu n'est pas prête",
+        "La protección de eventos de este lugar aún no está lista", "이 장소의 이벤트 보호가 준비되지 않았습니다"
+    };
+    for (unsigned language = 0; language < tracker::kLanguageCount; ++language) {
+        tracker::SetDisplayLanguage(static_cast<tracker::Language>(language));
+        Check(std::strcmp(tracker::RevisitNativeTargetReason(tracker::forest::kTarget,tracker::ReadRevisitNativeContext()),
+              localizedGuardReasons[language])==0,"all eight reasons preserve missing-guard meaning");
+        Check(!tracker::RevisitNativeTargetAvailable(tracker::forest::kTarget,tracker::ReadRevisitNativeContext()),
+              "changing display language cannot enable travel");
+    }
+    tracker::SetDisplayLanguage(tracker::Language::Chinese);
     f.Reset();tracker::nativeLoad=nullptr;
     Check(std::strcmp(tracker::RevisitNativeTargetReason(tracker::forest::kTarget,tracker::ReadRevisitNativeContext()),
           "场景加载接口尚未就绪")==0,"experimental forest reason identifies missing loader rather than story completion");

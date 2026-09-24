@@ -12,7 +12,8 @@ import math
 import re
 import struct
 
-from formats import Fpac
+from localized_game_names import (FOREST_PLACE, FOREST_TARGET, LANGUAGES, cpp_array,
+                                  load_language_resources, unique_place_name)
 
 
 EXE_SHA256 = "d8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf"
@@ -141,12 +142,102 @@ def write_catalog(rows: list[dict], output: Path) -> dict:
     return summary
 
 
+def build_localized_travel(resources: dict, parsed: dict | None = None) -> list[dict]:
+    """按原生身份核对八语目录，再为每个真实目的地生成一组八语官方名称。
+
+    ID 相同的入口变体保留在旧目录，旁路名称以第一条原生展示行对应的 ID 为键。
+    不能用外文翻译结果反推 internal 分类：英文内部行没有『◆』前缀。遇到
+    简中/日文尚未翻译的调试名称，八语统一引用同场景、同地点 ID 的正式地点表。
+    """
+    if set(resources) != set(LANGUAGES):
+        raise ValueError("传送名称资源必须覆盖简体中文、日文、英文、繁体中文、德文、法文、西班牙文、韩文")
+    parsed = parsed if parsed is not None else {
+        language: parse_travel_table(resources[language].travel) for language in LANGUAGES}
+    if set(parsed) != set(LANGUAGES):
+        raise ValueError("传送表必须覆盖简体中文、日文、英文、繁体中文、德文、法文、西班牙文、韩文")
+    baseline = parsed["sc"]
+    # 展示文字和由文字推导的分类允许不同；所有影响落点/许可的原生字段必须相同。
+    ignored = {"name", "group", "category", "kind"}
+    for language in LANGUAGES:
+        rows = parsed[language]
+        if len(rows) != len(baseline) or any(
+                {key: value for key, value in left.items() if key not in ignored} !=
+                {key: value for key, value in right.items() if key not in ignored}
+                for left, right in zip(baseline, rows)):
+            raise ValueError(f"{language} 传送身份或条件与简中资源不一致，禁止错配名称")
+    result, seen = [], set()
+    for index, base in enumerate(baseline):
+        if base["id"] in seen:
+            continue
+        seen.add(base["id"])
+        # 只有整组八语同一来源，才不会把英文有名称的内部入口误当成新的可用目标。
+        from_place = any(parsed[language][index]["name"].startswith("◆") for language in LANGUAGES)
+        # 未支持的内部入口仍由原生目录保留身份，但不能为了凑全翻译给它编造名称。
+        # 荣耀号两项是已审核例外；其 place/scene 可以精确命中正式地点名称。
+        if from_place and base["id"] not in (165, 166):
+            continue
+        row = {"id": base["id"], "names": {}, "groups": {},
+               "source": {"table": "t_place.tbl" if from_place else "t_mapjump.tbl",
+                          "id": base["place"] if from_place else base["id"],
+                          "scene": base["scene"], "row": index}}
+        for language in LANGUAGES:
+            source = resources[language]
+            name = (unique_place_name(source.places, base["place"], base["scene"])
+                    if from_place else parsed[language][index]["name"])
+            if not name or name.startswith("◆"):
+                raise ValueError(f"{language} 传送点 {base['id']} 缺少可展示的原生名称")
+            row["names"][language] = name
+            row["groups"][language] = source.regions[base["region"]]
+        result.append(row)
+    # 迷途之森是 Mod 自己的入口，不能冒充 t_mapjump 的原生行。这里只导出正式
+    # 地点名；『补箱入口』等用途说明交给界面文案翻译，与游戏专名明确分开。
+    result.append({"id": FOREST_TARGET,
+                   "names": {language: unique_place_name(resources[language].places, FOREST_PLACE, "mp0081")
+                             for language in LANGUAGES},
+                   "groups": {language: resources[language].regions[1] for language in LANGUAGES},
+                   "source": {"table": "t_place.tbl", "id": FOREST_PLACE, "scene": "mp0081"}})
+    return result
+
+
+def write_localized_travel(rows: list[dict], resources: dict, output: Path) -> None:
+    """旁路表按目标 ID 查名，地区表供当前地区和返程记录共用，八语顺序保持一致。"""
+    output.mkdir(parents=True, exist_ok=True)
+    result = {"schema_version": 1, "languages": list(LANGUAGES), "rows": rows,
+              "regions": [{"id": region, "names": {language: resources[language].regions[region]
+                                                     for language in LANGUAGES}}
+                          for region in range(1, 10)],
+              "sources": {language: resources[language].sources for language in LANGUAGES}}
+    (output / "travel_localization.json").write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    lines = ["// 从玩家本机官方地点和传送资源生成；数组顺序为简体中文、日文、英文、繁体中文、德文、法文、西班牙文、韩文。",
+             "// 仅提供展示文字，不改变原生目的地、入口变体和可用状态。",
+             "#pragma once", "#include <cstdint>", "namespace tracker {",
+             "struct LocalizedTravelDefinition { uint32_t id; const char* names[8]; const char* groups[8]; };",
+             "inline constexpr LocalizedTravelDefinition kLocalizedTravel[] = {"]
+    for row in rows:
+        arrays = ", ".join(cpp_array([row[key][language] for language in LANGUAGES])
+                           for key in ("names", "groups"))
+        lines.append("    {" + str(row["id"]) + "u, " + arrays + "},")
+    lines += ["};", "struct LocalizedRegionDefinition { uint32_t id; const char* names[8]; };",
+              "inline constexpr LocalizedRegionDefinition kLocalizedRegions[] = {"]
+    for row in result["regions"]:
+        lines.append("    {" + str(row["id"]) + "u, " +
+                     cpp_array([row["names"][language] for language in LANGUAGES]) + "},")
+    lines += ["};", "}", ""]
+    (output / "travel_localization.h").write_text("\n".join(lines), encoding="utf-8")
+
+
 def extract(game: Path, output: Path) -> None:
     """只允许已核对的 EXE 构建，避免新资源布局被误认为已经完成运行时适配。"""
     if hashlib.sha256((game / "sora_2nd.exe").read_bytes()).hexdigest() != EXE_SHA256:
         raise ValueError("EXE 版本不匹配，停止生成传送目录")
-    table = Fpac(game / "pac/steam/table_sc.pac").read("table_sc/t_mapjump.tbl")
-    print(json.dumps(write_catalog(parse_travel_table(table), output), ensure_ascii=False))
+    resources = load_language_resources(game)
+    parsed = {language: parse_travel_table(resources[language].travel) for language in LANGUAGES}
+    localized = build_localized_travel(resources, parsed)
+    summary = write_catalog(parsed["sc"], output)
+    write_localized_travel(localized, resources, output)
+    print(json.dumps({**summary, "languages": list(LANGUAGES), "localized_targets": len(localized)},
+                     ensure_ascii=False))
 
 
 if __name__ == "__main__":

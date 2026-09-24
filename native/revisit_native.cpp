@@ -8,6 +8,7 @@
 #include "revisit_forest_rules.h"
 #include "revisit_phase_rules.h"
 #include "revisit_policy.h"
+#include "localization.h"
 #include "tracker.h"
 #include <MinHook.h>
 #include <Windows.h>
@@ -1019,28 +1020,62 @@ const char* RevisitNativeTargetReason(uint32_t target,const RevisitNativeContext
     // 已判定不可用时提供原因，因此不能因底层应急候选而把普通点禁用原因清空。
     if (target==15 ? RevisitNativeOrdinaryTargetAvailable(target,context) :
         RevisitNativeTargetAvailable(target,context)) return "";
-    if (!context.valid) return "等待游戏场景数据";
+    if (!context.valid) return Localize("等待游戏场景数据", "ゲームのシーン情報を待っています", "Waiting for scene data",
+        "等待遊戲場景資料", "Warte auf Szenendaten", "En attente des données de scène", "Esperando datos de la escena", "게임 장면 데이터 대기 중");
     if constexpr (revisit_policy::kUnrestricted) {
         // 实验策略不再以剧情旗标灰化目的地；失败原因必须指向实际加载条件，
         // 避免把保护未安装或未知目录误报成“原剧情尚未完成”。
-        if (!SupportedSource(context)) return "当前场景身份尚未通过核对";
+        if (!SupportedSource(context)) return Localize("当前场景身份尚未通过核对", "現在のシーンを確認できません", "Current scene could not be verified",
+            "目前場景身分尚未通過核對", "Aktuelle Szene konnte nicht geprüft werden", "Impossible de vérifier la scène actuelle",
+            "No se ha podido verificar la escena actual", "현재 장면을 확인할 수 없습니다");
         if (target==forest::kTarget) return ForestRevisitGuardReady() ?
-            "场景加载接口尚未就绪" : "迷途之森剧情保护尚未就绪";
-        return "目的地原生数据尚未通过核对";
+            Localize("场景加载接口尚未就绪", "シーン読み込み機能の準備ができていません", "Scene loading is not ready",
+                "場景載入介面尚未就緒", "Szenenladen ist noch nicht bereit", "Le chargement de scène n'est pas prêt",
+                "La carga de escenas aún no está lista", "장면을 불러올 준비가 되지 않았습니다") :
+            Localize("该地点的剧情保护尚未就绪", "この場所のイベント保護が準備できていません", "Event protection for this location is not ready",
+                "該地點的劇情保護尚未就緒", "Ereignisschutz für diesen Ort ist noch nicht bereit", "La protection des événements de ce lieu n'est pas prête",
+                "La protección de eventos de este lugar aún no está lista", "이 장소의 이벤트 보호가 준비되지 않았습니다");
+        return Localize("目的地原生数据尚未通过核对", "移動先のゲーム内データを確認できません", "Native destination data could not be verified",
+            "目的地原生資料尚未通過核對", "Zieldaten des Spiels konnten nicht geprüft werden", "Impossible de vérifier les données de destination du jeu",
+            "No se han podido verificar los datos de destino del juego", "게임의 목적지 데이터를 확인할 수 없습니다");
     } else {
-    if (!SupportedSource(context)) return "当前场景或剧情阶段尚未支持";
+    if (!SupportedSource(context)) return Localize("当前场景或剧情阶段尚未支持", "現在のシーンまたは進行状況には対応していません", "Current scene or story state is not supported",
+        "目前場景或劇情階段尚未支援", "Aktuelle Szene oder Handlungsphase wird nicht unterstützt", "Scène ou progression actuelle non prise en charge",
+        "La escena o fase actual de la historia no es compatible", "현재 장면 또는 스토리 진행 상태는 지원되지 않습니다");
     if (target==forest::kTarget) return ForestRevisitGuardReady() ?
-        "迷途之森原剧情尚未完成" : "迷途之森剧情保护尚未就绪";
-    if (context.chapter>=8 && target!=15 && target!=108 && FindDestination(target)) return "旧地图剧情完成条件尚未满足";
+        Localize("该地点的原剧情尚未完成", "この場所の本来のイベントが完了していません", "This location's original story event is not complete",
+            "該地點的原劇情尚未完成", "Das ursprüngliche Ereignis dieses Ortes ist noch nicht abgeschlossen", "L'événement d'origine de ce lieu n'est pas terminé",
+            "El evento original de este lugar no se ha completado", "이 장소의 원래 스토리 이벤트가 완료되지 않았습니다") :
+        Localize("该地点的剧情保护尚未就绪", "この場所のイベント保護が準備できていません", "Event protection for this location is not ready",
+            "該地點的劇情保護尚未就緒", "Ereignisschutz für diesen Ort ist noch nicht bereit", "La protection des événements de ce lieu n'est pas prête",
+            "La protección de eventos de este lugar aún no está lista", "이 장소의 이벤트 보호가 준비되지 않았습니다");
+    if (context.chapter>=8 && target!=15 && target!=108 && FindDestination(target))
+        return Localize("旧地图剧情完成条件尚未满足", "過去のマップのイベント完了条件を満たしていません", "Story requirements for revisiting this map are not met",
+            "舊地圖劇情完成條件尚未滿足", "Handlungsbedingungen für den erneuten Besuch sind nicht erfüllt", "Les conditions de l'histoire pour revisiter cette carte ne sont pas remplies",
+            "No se cumplen los requisitos de la historia para volver a este mapa", "이 맵을 다시 방문하기 위한 스토리 조건을 충족하지 못했습니다");
     const auto state=target<context.nativeRuleStatus.size()?context.nativeRuleStatus[target]:RuleUnknown;
     switch (state) {
-    case RuleUnregistered:return "当前剧情尚未登记此地点";
-    case RuleBlocked:return "游戏当前剧情禁用此地点";
-    case RuleAreaBlocked:return "游戏当前剧情禁用此分组";
-    case RuleInternal:return "内部或特殊入口，尚未适配";
-    case RuleBeforeScript:return "请先完成游戏原生传送剧情";
-    case RuleInconsistent:return "原生传送数据未通过核对";
-    default:return "请打开区域地图，等待原生传送规则更新";
+    case RuleUnregistered:return Localize("当前剧情尚未登记此地点", "現在の進行状況では未登録の場所です", "This location is not registered at the current story stage",
+        "目前劇情尚未登記此地點", "Dieser Ort ist in der aktuellen Handlungsphase nicht registriert", "Ce lieu n'est pas enregistré à ce stade de l'histoire",
+        "Este lugar no está registrado en la fase actual de la historia", "현재 스토리 단계에 등록되지 않은 장소입니다");
+    case RuleBlocked:return Localize("游戏当前剧情禁用此地点", "現在の進行状況では移動できない場所です", "This location is disabled by the current story state",
+        "遊戲目前劇情禁用此地點", "Dieser Ort ist in der aktuellen Handlungsphase gesperrt", "Ce lieu est bloqué par la progression actuelle de l'histoire",
+        "Este lugar está bloqueado por el progreso actual de la historia", "현재 스토리 진행 상태에서 이동할 수 없는 장소입니다");
+    case RuleAreaBlocked:return Localize("游戏当前剧情禁用此分组", "現在の進行状況では移動できない地域です", "This region is disabled by the current story state",
+        "遊戲目前劇情禁用此分組", "Diese Region ist in der aktuellen Handlungsphase gesperrt", "Cette région est bloquée par la progression actuelle de l'histoire",
+        "Esta región está bloqueada por el progreso actual de la historia", "현재 스토리 진행 상태에서 이동할 수 없는 지역입니다");
+    case RuleInternal:return Localize("内部或特殊入口，尚未适配", "内部用または特殊な入口のため未対応です", "Internal or special entrance is not supported",
+        "內部或特殊入口，尚未適配", "Interne oder spezielle Eingänge werden nicht unterstützt", "Entrée interne ou spéciale non prise en charge",
+        "Las entradas internas o especiales no son compatibles", "내부용 또는 특수 입구는 지원되지 않습니다");
+    case RuleBeforeScript:return Localize("请先完成游戏原生传送剧情", "先にゲーム本来の移動イベントを完了してください", "Complete the game's travel event first",
+        "請先完成遊戲原生傳送劇情", "Zuerst das Reiseereignis des Spiels abschließen", "Terminez d'abord l'événement de déplacement du jeu",
+        "Completa primero el evento de viaje del juego", "먼저 게임의 원래 이동 이벤트를 완료해 주세요");
+    case RuleInconsistent:return Localize("原生传送数据未通过核对", "ゲーム内の移動データを確認できません", "Native travel data could not be verified",
+        "原生傳送資料未通過核對", "Reisedaten des Spiels konnten nicht geprüft werden", "Impossible de vérifier les données de déplacement du jeu",
+        "No se han podido verificar los datos de viaje del juego", "게임의 이동 데이터를 확인할 수 없습니다");
+    default:return Localize("请打开区域地图，等待原生传送规则更新", "エリアマップを開き、移動条件の更新をお待ちください", "Open the area map and wait for travel rules to refresh",
+        "請開啟區域地圖，等待原生傳送規則更新", "Gebietskarte öffnen und auf aktualisierte Reiseregeln warten", "Ouvrez la carte de zone et attendez la mise à jour des conditions de déplacement",
+        "Abre el mapa de la zona y espera a que se actualicen las reglas de viaje", "지역 맵을 열고 이동 조건이 갱신될 때까지 기다려 주세요");
     }
     }
 }
