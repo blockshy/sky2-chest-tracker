@@ -7,14 +7,6 @@ option(SKY2_BUILD_MOD "构建 Windows 游戏插件" ON)
 # 不依赖 DLL 选项或头文件默认值，避免切换发布默认后丢失原有保守规则回归。
 option(SKY2_UNRESTRICTED_TRAVEL "全传送：不以剧情条件限制清单目的地" ON)
 set(SKY2_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.deps" CACHE PATH "固定提交的第三方源码目录")
-# Hub 是新增第三种分发，原 ASI/Standalone 永久保留。没有相邻 SDK 时默认关闭，
-# 因而单独检出本仓库仍能按原来的方法构建，不要求下载宿主源码。
-set(SKY2_HUB_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../sky2-mod-hub/sdk" CACHE PATH "Sky2 Mod Hub SDK 目录")
-set(SKY2_HUB_DEFAULT OFF)
-if(EXISTS "${SKY2_HUB_SDK_DIR}/sky2_hub.h")
-    set(SKY2_HUB_DEFAULT ON)
-endif()
-option(SKY2_BUILD_HUB_MODULE "额外构建 Sky2 Mod Hub 模块，不替代 ASI/Standalone" ${SKY2_HUB_DEFAULT})
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -23,13 +15,18 @@ include(CTest)
 # 显式登记头文件，防止中文 MSVC 的包含文件输出解析异常导致复用陈旧对象。
 # 发布脚本另执行 clean-first；上游依赖固定到已记录的提交。
 set(TRACKER_LOCAL_HEADERS
-    native/core.h native/progress.h native/tracker.h native/hosted_activity.h native/log.h native/runtime_files.h native/controller_logic.h native/input_bridge.h native/ui_scale.h
+    native/core.h native/progress.h native/tracker.h native/log.h native/runtime_files.h native/controller_logic.h native/input_bridge.h native/ui_scale.h
+    native/panel_pages.h native/panel_state.h native/standalone_panel.h native/standalone_input_policy.h
+    native/standalone_hotkeys.h native/standalone_hud.h native/hud_preferences.h native/panel_fonts.h
     native/localization.h native/localized_names.h native/game_language.h native/ui_text.h
     native/exploration.h native/exploration_logic.h native/travel_refresh.h native/travel_menu.h
     native/revisit.h native/revisit_catalog.h native/revisit_logic.h native/revisit_native.h native/revisit_event_guard.h
     native/revisit_event_guard_rules.h native/revisit_return_point.h native/revisit_journal.h
     native/revisit_forest.h native/revisit_forest_rules.h native/revisit_phase_rules.h native/revisit_policy.h)
 list(TRANSFORM TRACKER_LOCAL_HEADERS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+# 公共绘制和输入头也显式参与依赖；更换函数表或键位结构后必须重新编译真实 DLL。
+file(GLOB TRACKER_UI_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/native/standalone_ui/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/native/standalone_ui/*.hpp")
+list(APPEND TRACKER_LOCAL_HEADERS ${TRACKER_UI_HEADERS})
 set(SKY2_HAVE_CATALOG OFF)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/generated/chest_catalog.h" AND
    EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/generated/map_catalog.h")
@@ -49,6 +46,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/generated/chest_catalog.h" AND
 endif()
 set_source_files_properties(
     native/tracker.cpp native/runtime_files_win.cpp native/overlay.cpp native/game_language.cpp native/input_bridge.cpp native/xinput_proxy.cpp native/plugin_entry.cpp native/exploration.cpp
+    native/panel_pages.cpp native/standalone_panel.cpp native/standalone_hud.cpp native/hud_preferences.cpp native/hud_preferences_win.cpp native/panel_fonts.cpp
+    native/standalone_ui/input.cpp native/standalone_ui/hotkeys.cpp native/standalone_ui/hotkeys_ui.cpp
+    native/standalone_ui/ui.cpp native/standalone_ui/ui_layout.cpp native/standalone_ui/ui_navigation.cpp native/standalone_ui/ui_shell.cpp
+    tests/panel_runtime_tests.cpp tests/panel_state_tests.cpp tests/standalone_visual.cpp
     native/revisit.cpp native/revisit_native.cpp native/revisit_event_guard.cpp native/revisit_forest.cpp
     native/revisit_journal_win.cpp tests/revisit_journal_io_tests.cpp tests/revisit_tests.cpp tests/revisit_catalog_tests.cpp
     tests/revisit_event_guard_tests.cpp tests/revisit_event_guard_abi_tests.cpp tests/revisit_native_abi_tests.cpp
@@ -83,16 +84,24 @@ if(SKY2_BUILD_MOD)
         "${SKY2_DEPS_DIR}/imgui/backends/imgui_impl_dx11.cpp"
         "${SKY2_DEPS_DIR}/imgui/backends/imgui_impl_win32.cpp")
     target_include_directories(tracker_imgui PUBLIC "${SKY2_DEPS_DIR}/imgui" "${SKY2_DEPS_DIR}/imgui/backends")
+    # 手柄必须来自游戏同一条 Steam/XInput 映射链；后端不再自行枚举物理设备。
+    target_compile_definitions(tracker_imgui PRIVATE IMGUI_IMPL_WIN32_DISABLE_GAMEPAD)
     # 两种分发共用完全相同的功能对象，只有加载入口不同；避免独立维护两套游戏逻辑。
     # 独立版仍由 XInput 代理启动；插件版由 UAL 的 InitializeASI 启动。
     add_library(tracker_runtime OBJECT
         native/tracker.cpp native/runtime_files_win.cpp native/overlay.cpp native/game_language.cpp native/input_bridge.cpp
+        native/standalone_panel.cpp native/panel_pages.cpp native/panel_fonts.cpp
+        native/standalone_hud.cpp native/hud_preferences.cpp native/hud_preferences_win.cpp
+        native/standalone_ui/input.cpp native/standalone_ui/ui.cpp native/standalone_ui/ui_layout.cpp
+        native/standalone_ui/hotkeys.cpp native/standalone_ui/hotkeys_ui.cpp
+        native/standalone_ui/ui_navigation.cpp native/standalone_ui/ui_shell.cpp
         native/exploration.cpp native/exploration_shims.asm
         native/revisit.cpp native/revisit_native.cpp native/revisit_native_shims.asm
         native/revisit_event_guard.cpp native/revisit_event_guard.asm
         native/revisit_forest.cpp native/revisit_forest.asm
         native/revisit_journal.cpp native/revisit_journal_win.cpp)
-    target_include_directories(tracker_runtime PRIVATE native data/generated)
+    # 独立两版共同链接本仓库绘制组件，业务页通过只读函数表使用控件。
+    target_include_directories(tracker_runtime PRIVATE native native/standalone_ui data/generated)
     target_compile_definitions(tracker_runtime PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_compile_definitions(tracker_runtime PRIVATE SKY2_UNRESTRICTED_TRAVEL=$<BOOL:${SKY2_UNRESTRICTED_TRAVEL}>)
     target_compile_options(tracker_runtime PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/utf-8;/W4;/EHsc>)
@@ -107,45 +116,55 @@ if(SKY2_BUILD_MOD)
     endforeach()
     set_target_properties(Sky2ChestTracker PROPERTIES OUTPUT_NAME xinput1_4 PREFIX "")
     set_target_properties(Sky2ChestTrackerAsi PROPERTIES OUTPUT_NAME Sky2ChestTracker PREFIX "" SUFFIX ".asi")
-    if(SKY2_BUILD_HUB_MODULE)
-        if(NOT EXISTS "${SKY2_HUB_SDK_DIR}/sky2_hub.h" OR NOT EXISTS "${SKY2_HUB_SDK_DIR}/hooks/MinHook.h")
-            message(FATAL_ERROR "Hub SDK not found. Set SKY2_HUB_SDK_DIR or disable SKY2_BUILD_HUB_MODULE; original distributions remain available.")
-        endif()
-        # 业务源码单独编译，模块目标优先包含宿主的 MinHook 适配头；绝不链接私有
-        # MinHook 或 ImGui，也不编入旧 overlay/input_bridge，避免重复接管系统资源。
-        add_library(Sky2ChestTrackerModule SHARED
-            native/module_entry.cpp native/hub_panel.cpp native/tracker.cpp native/runtime_files_win.cpp
-            native/game_language.cpp native/exploration.cpp native/exploration_shims.asm
-            native/revisit.cpp native/revisit_native.cpp native/revisit_native_shims.asm
-            native/revisit_event_guard.cpp native/revisit_event_guard.asm
-            native/revisit_forest.cpp native/revisit_forest.asm native/revisit_journal.cpp native/revisit_journal_win.cpp)
-        target_include_directories(Sky2ChestTrackerModule BEFORE PRIVATE
-            "${SKY2_HUB_SDK_DIR}/hooks" "${SKY2_HUB_SDK_DIR}" native data/generated)
-        target_compile_definitions(Sky2ChestTrackerModule PRIVATE
-            SKY2_HUB_MODULE=1 UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
-            SKY2_UNRESTRICTED_TRAVEL=$<BOOL:${SKY2_UNRESTRICTED_TRAVEL}>)
-        target_compile_options(Sky2ChestTrackerModule PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/utf-8;/W4;/EHsc>)
-        target_link_libraries(Sky2ChestTrackerModule PRIVATE bcrypt)
-        set_target_properties(Sky2ChestTrackerModule PROPERTIES OUTPUT_NAME "Sky2ChestTracker.module" PREFIX "")
-        set_source_files_properties(native/module_entry.cpp native/hub_panel.cpp PROPERTIES
-            OBJECT_DEPENDS "${TRACKER_LOCAL_HEADERS};${CMAKE_CURRENT_SOURCE_DIR}/native/hub_panel.h;${CMAKE_CURRENT_SOURCE_DIR}/native/hub_ui_state.h;${SKY2_HUB_SDK_DIR}/sky2_hub.h;${SKY2_HUB_SDK_DIR}/sky2_ui.hpp")
-    endif()
 endif()
 
 if(BUILD_TESTING)
-    if(TARGET Sky2ChestTrackerModule)
-        add_executable(tracker_hub_module_abi_tests tests/hub_module_abi_tests.cpp)
-        target_include_directories(tracker_hub_module_abi_tests PRIVATE "${SKY2_HUB_SDK_DIR}")
-        target_compile_definitions(tracker_hub_module_abi_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-        target_compile_options(tracker_hub_module_abi_tests PRIVATE /utf-8 /W4 /EHsc)
-        add_dependencies(tracker_hub_module_abi_tests Sky2ChestTrackerModule)
-        add_test(NAME tracker_hub_module_abi_tests COMMAND tracker_hub_module_abi_tests $<TARGET_FILE:Sky2ChestTrackerModule>)
-        add_executable(tracker_hub_panel_runtime_tests tests/hub_panel_runtime_tests.cpp native/hub_panel.cpp)
-        target_include_directories(tracker_hub_panel_runtime_tests PRIVATE "${SKY2_HUB_SDK_DIR}" native data/generated)
-        target_compile_definitions(tracker_hub_panel_runtime_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
+    add_executable(tracker_hud_preferences_tests tests/hud_preferences_tests.cpp native/hud_preferences.cpp)
+    target_include_directories(tracker_hud_preferences_tests PRIVATE native)
+    add_test(NAME tracker_hud_preferences_tests COMMAND tracker_hud_preferences_tests)
+    if(MSVC)
+        target_compile_options(tracker_hud_preferences_tests PRIVATE /utf-8 /W4 /EHsc)
+    endif()
+    if(WIN32)
+        add_executable(tracker_hud_preferences_io_tests tests/hud_preferences_io_tests.cpp native/hud_preferences.cpp native/hud_preferences_win.cpp)
+        target_include_directories(tracker_hud_preferences_io_tests PRIVATE native)
+        target_compile_definitions(tracker_hud_preferences_io_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+        if(MSVC)
+            target_compile_options(tracker_hud_preferences_io_tests PRIVATE /utf-8 /W4 /EHsc)
+        endif()
+        add_test(NAME tracker_hud_preferences_io_tests COMMAND tracker_hud_preferences_io_tests)
+    endif()
+    if(TARGET tracker_imgui)
+        set(SKY2_SOLO_IMGUI_TARGET tracker_imgui)
+        include(native/standalone_ui/tests.cmake)
+    endif()
+    if(WIN32 AND MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND SKY2_HAVE_CATALOG)
+        # 独立窗口回归只使用本仓库代码，验证分组页签、操作路由和真实两次确认。
+        add_executable(tracker_standalone_panel_runtime_tests tests/panel_runtime_tests.cpp native/panel_pages.cpp)
+        target_include_directories(tracker_standalone_panel_runtime_tests PRIVATE native/standalone_ui native data/generated)
+        target_compile_definitions(tracker_standalone_panel_runtime_tests PRIVATE
+            UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
             SKY2_UNRESTRICTED_TRAVEL=$<BOOL:${SKY2_UNRESTRICTED_TRAVEL}>)
-        target_compile_options(tracker_hub_panel_runtime_tests PRIVATE /utf-8 /W4 /EHsc)
-        add_test(NAME tracker_hub_panel_runtime_tests COMMAND tracker_hub_panel_runtime_tests)
+        target_compile_options(tracker_standalone_panel_runtime_tests PRIVATE /utf-8 /W4 /EHsc)
+        add_test(NAME tracker_standalone_panel_runtime_tests COMMAND tracker_standalone_panel_runtime_tests)
+        add_executable(tracker_standalone_bridge_tests tests/standalone_bridge_tests.cpp native/standalone_ui/input.cpp native/standalone_ui/hotkeys.cpp)
+        target_include_directories(tracker_standalone_bridge_tests PRIVATE native data/generated)
+        target_compile_definitions(tracker_standalone_bridge_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+        target_compile_options(tracker_standalone_bridge_tests PRIVATE /utf-8 /W4 /EHsc)
+        target_link_libraries(tracker_standalone_bridge_tests PRIVATE user32 bcrypt)
+        add_test(NAME tracker_standalone_bridge_tests COMMAND tracker_standalone_bridge_tests)
+        if(TARGET tracker_imgui)
+            add_executable(tracker_standalone_visual tests/standalone_visual.cpp native/standalone_panel.cpp
+                native/standalone_hud.cpp native/hud_preferences.cpp native/hud_preferences_win.cpp
+                native/standalone_ui/hotkeys.cpp native/standalone_ui/hotkeys_ui.cpp
+                native/panel_pages.cpp native/panel_fonts.cpp native/standalone_ui/input.cpp native/standalone_ui/ui.cpp
+                native/standalone_ui/ui_layout.cpp native/standalone_ui/ui_navigation.cpp native/standalone_ui/ui_shell.cpp)
+            target_include_directories(tracker_standalone_visual PRIVATE native native/standalone_ui data/generated)
+            target_compile_definitions(tracker_standalone_visual PRIVATE
+                UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN SKY2_UNRESTRICTED_TRAVEL=$<BOOL:${SKY2_UNRESTRICTED_TRAVEL}>)
+            target_compile_options(tracker_standalone_visual PRIVATE /utf-8 /W4 /EHsc)
+            target_link_libraries(tracker_standalone_visual PRIVATE tracker_imgui d3d11 d3dcompiler windowscodecs ole32 bcrypt)
+        endif()
     endif()
     if(WIN32 AND MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
         # 隔离宿主和诊断插件不进入玩家正式包；真实 UAL 由独立集成脚本按固定版本验证。
@@ -160,8 +179,10 @@ if(BUILD_TESTING)
     endif()
     add_executable(tracker_controller_tests tests/controller_tests.cpp)
     target_include_directories(tracker_controller_tests PRIVATE native)
-    add_executable(tracker_hub_ui_tests tests/hub_ui_tests.cpp)
-    target_include_directories(tracker_hub_ui_tests PRIVATE native)
+    add_executable(tracker_standalone_input_tests tests/standalone_input_tests.cpp)
+    target_include_directories(tracker_standalone_input_tests PRIVATE native)
+    add_executable(tracker_panel_state_tests tests/panel_state_tests.cpp)
+    target_include_directories(tracker_panel_state_tests PRIVATE native)
     add_executable(tracker_ui_scale_tests tests/ui_scale_tests.cpp)
     target_include_directories(tracker_ui_scale_tests PRIVATE native)
     add_executable(tracker_ui_text_tests tests/ui_text_tests.cpp)
@@ -199,7 +220,7 @@ if(BUILD_TESTING)
     target_include_directories(tracker_revisit_journal_tests PRIVATE native)
     set_source_files_properties(tests/revisit_journal_tests.cpp native/revisit_journal.cpp PROPERTIES
         OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/native/revisit_journal.h;${CMAKE_CURRENT_SOURCE_DIR}/native/revisit_return_point.h")
-    foreach(target tracker_core_tests tracker_controller_tests tracker_hub_ui_tests tracker_ui_scale_tests tracker_ui_text_tests tracker_localized_names_tests tracker_language_tests tracker_runtime_files_tests tracker_exploration_tests tracker_travel_refresh_tests tracker_revisit_tests tracker_revisit_catalog_tests tracker_revisit_event_guard_tests tracker_revisit_forest_tests tracker_revisit_journal_tests)
+    foreach(target tracker_core_tests tracker_controller_tests tracker_standalone_input_tests tracker_panel_state_tests tracker_ui_scale_tests tracker_ui_text_tests tracker_localized_names_tests tracker_language_tests tracker_runtime_files_tests tracker_exploration_tests tracker_travel_refresh_tests tracker_revisit_tests tracker_revisit_catalog_tests tracker_revisit_event_guard_tests tracker_revisit_forest_tests tracker_revisit_journal_tests)
         target_compile_definitions(${target} PRIVATE SKY2_UNRESTRICTED_TRAVEL=0)
         if(MSVC)
             target_compile_options(${target} PRIVATE /utf-8 /W4)

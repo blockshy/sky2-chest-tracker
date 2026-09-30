@@ -40,6 +40,9 @@ __pycache__/
 *.tbl
 *.bin
 *.zip
+# 独立面板的玩家快捷键与 HUD 偏好只保存在本机，不作为源码样例提交。
+shortcuts.ini
+hud.ini
 .env
 .env.*
 !.env.example

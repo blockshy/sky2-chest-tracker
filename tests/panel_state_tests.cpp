@@ -1,6 +1,6 @@
-// 验证模块 UI 的高影响边界：第二次确认、离页/失焦撤销、原生快照变化和语言映射。
+// 验证页面的高影响边界：第二次确认、离页/失焦撤销、原生快照变化。
 // 测试只使用值对象，不读取游戏内存，不触发任何真实传送或存档写入。
-#include "hub_ui_state.h"
+#include "panel_state.h"
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -9,16 +9,10 @@
 using namespace tracker;
 
 int main() {
-    assert(HubLanguage(0) == Language::Chinese);
-    assert(HubLanguage(1) == Language::TraditionalChinese);
-    assert(HubLanguage(2) == Language::Japanese);
-    assert(HubLanguage(3) == Language::English);
-    assert(HubLanguage(7) == Language::Korean);
-    assert(HubLanguage(-1) == Language::Chinese);
     RevisitNativeContext context{};
     context.chapter = 4; context.browseIdentity = 17; context.progressSignature = 23;
     std::memcpy(context.scene, "mp0001", sizeof("mp0001"));
-    HubTravelConfirmation state;
+    PanelTravelConfirmation state;
     assert(!state.Press(10, 100, true, true, context));
     assert(state.Armed(10, 101));
     assert(state.Press(10, 200, true, true, context));
@@ -46,5 +40,5 @@ int main() {
     assert(!state.Press(11, 1100, true, true, context));
     assert(!state.Press(11, 9100, true, true, context));
     assert(state.Press(11, 9101, true, true, context));
-    std::cout << "Hub confirmation and language checks passed.\n";
+    std::cout << "Panel confirmation checks passed.\n";
 }

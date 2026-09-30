@@ -310,11 +310,6 @@ void TestMap(TestResult& result, uintptr_t image, uintptr_t inaccessible) {
     MapFixture fixture(image);
     fixture.Reset();
     fixture.VerifyCall(result, 0.625f, "真实区块与节点匹配时采用当前楼层 alpha");
-    tracker::g_hostedEffectsEnabled.store(false);
-    fixture.VerifyCall(result, fixture.originalAlpha, "Hub 已停用时旁路地图揭示而不释放挂钩");
-    result.Check(tracker::g_mapReveal.load(), "软停用保留原地图揭示偏好");
-    tracker::g_hostedEffectsEnabled.store(true);
-    fixture.VerifyCall(result, 0.625f, "重新启用后恢复原地图揭示偏好");
     const auto reject = [&](const char* label, auto prepare) {
         fixture.Reset(); prepare();
         fixture.VerifyCall(result, fixture.originalAlpha, label);

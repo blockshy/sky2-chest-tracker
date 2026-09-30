@@ -1,21 +1,12 @@
-// Hub 传送确认的纯状态：界面隐藏/切页/失焦和原生上下文变化都会撤销许可。
+// 面板传送确认的纯状态：界面隐藏/切页/失焦和原生上下文变化都会撤销许可。
 // 不读取游戏内存，不提交传送；调用者仍需在第二次确认后走 QueueRevisitTravel。
 #pragma once
 #include "revisit_logic.h"
 #include "revisit_native.h"
-#include "localization.h"
 #include <cstring>
 
 namespace tracker {
-// 宿主 ABI 与旧宝箱枚举的顺序不同，必须逐项转换，不能直接 static_cast。
-inline Language HubLanguage(int32_t language) noexcept {
-    constexpr Language table[]{Language::Chinese, Language::TraditionalChinese,
-        Language::Japanese, Language::English, Language::German, Language::French,
-        Language::Spanish, Language::Korean};
-    return language >= 0 && language < 8 ? table[language] : Language::Chinese;
-}
-
-class HubTravelConfirmation {
+class PanelTravelConfirmation {
     RevisitConfirmation confirmation_;
     RevisitNativeContext expected_{};
 public:

@@ -1,9 +1,9 @@
-// Hub 宝箱页面：宿主负责实际控件、焦点和输入，本文件仅组织已有业务能力。
+// 宝箱业务页面：独立窗口负责控件、焦点和输入，本文件组织统计、探索与传送。
 // 游戏内存修改仍由原有探索/传送的安全回调消费，绘制线程不调用原生换图函数。
-#include "hub_panel.h"
+#include "panel_pages.h"
 #include "sky2_ui.hpp"
-#include "hub_ui_state.h"
-#include "hosted_activity.h"
+#include "panel_state.h"
+#include "controller_logic.h"
 #include "tracker.h"
 #include "exploration.h"
 #include "revisit.h"
@@ -22,7 +22,6 @@ namespace tracker {
 namespace {
 // 二级页面只管理展示状态；业务开关和传送安全队列仍由原实现拥有。
 enum class Section { Overview, Chests, Settings, Travel, Return };
-enum class Action { Markers, Mode, Hud, Chests, Reveal, Unvisited, Travel, Return };
 Section section = Section::Overview;
 Counts counts;
 uint64_t refreshed = 0, requestToken = 0;
@@ -31,21 +30,13 @@ bool submissionRejected = false;
 size_t mapPage = 0, travelSelection = 0;
 constexpr size_t kMapRows = 8;
 char mapSearch[192]{}, travelSearch[192]{};
-HubTravelConfirmation confirmation;
-// 用户功能偏好与模块活动状态分开：停用不覆盖标记/HUD/揭示偏好；需要原生菜单
-// 重建的传送辅助另存用户意图，恢复时重新排入原队列，不直接恢复旧对象指针。
-int32_t activity = 1;
-enum class ActivityNotice { None, TripActive, Dispatched, Restoring, RestoreFailed, TimedOut };
-ActivityNotice activityNotice = ActivityNotice::None;
-bool savedTravelPreference = false;
-uint64_t stopObservedAt = 0;
-
-const Sky2UiApi& Ui() { return *Sky2Hub_Host->ui; }
+PanelTravelConfirmation confirmation;
+const Sky2UiApi* pageUi = nullptr;
+const Sky2UiApi& Ui() { return *pageUi; }
 
 bool ValidFrame(const Sky2Frame* frame) noexcept {
-    // header_drawn 是 v1 的可选尾部，旧宿主只需提供原来的 controller 字段。
-    // 不能用 sizeof(新版 Sky2Frame) 拒绝仍能完整提供原功能的旧宿主。
-    return frame && frame->size >= offsetof(Sky2Frame, controller) + sizeof(Sky2Frame::controller);
+    // 绘制上下文必须完整；公开测试可显式构造值对象，不触碰游戏进程。
+    return pageUi && frame && frame->size >= sizeof(Sky2Frame);
 }
 
 float ListViewportHeight(const Sky2Frame& frame, bool travel = false, bool twoColumns = false) {
@@ -53,7 +44,7 @@ float ListViewportHeight(const Sky2Frame& frame, bool travel = false, bool twoCo
     const float fallback = (travel ? (twoColumns ? 300.0f : 180.0f) : 250.0f) * scale;
     float width = 0, height = 0;
     if (!sky2ui::ContentSize(Ui(), &width, &height) || !std::isfinite(height)) return fallback;
-    // 宿主提供的是 Main 固定可视高度，不读取自动增高卡片的剩余高度，避免
+    // 独立窗口提供的是 Main 固定可视高度，不读取自动增高卡片的剩余高度，避免
     // 列表随自身 ContentSize 或滚动位置反复涨缩。高度上限防止宽屏列表过长；
     // 下限保证仍有可浏览行，极窄窗口的其它功能继续由 Main 外层滚动到达。
     if (!travel) return std::clamp(height - 240.0f * scale, 120.0f * scale, 520.0f * scale);
@@ -139,67 +130,6 @@ bool CanSubmit(const RevisitNativeContext& context) noexcept {
     return RevisitReady() && context.available && RevisitContextAllowed(context) &&
         context.browsing && !context.busy && phase != RevisitNativePhase::Queued &&
         phase != RevisitNativePhase::ClosingMap && phase != RevisitNativePhase::Dispatched;
-}
-
-void SKY2_CALL Invoke(void* data) noexcept {
-    if (activity != 1) return; // 停用/收尾时拒绝宿主中尚未消费的旧动作。
-    try {
-        switch (static_cast<Action>(reinterpret_cast<uintptr_t>(data))) {
-        case Action::Markers: g_enabled.store(!g_enabled.load()); break;
-        case Action::Mode:
-            g_mode.store(g_mode.load() == Mode::Current ? Mode::Inherited : Mode::Current);
-            mapPage = 0; break;
-        case Action::Hud: hud = !hud; break;
-        case Action::Reveal: ToggleExploration(ExplorationFeature::MapReveal); break;
-        case Action::Unvisited: ToggleExploration(ExplorationFeature::TravelUnlock); break;
-        case Action::Chests:
-            ChooseSection(Section::Chests); Sky2Hub_Host->open_page(Sky2Hub_Host->owner); break;
-        case Action::Travel:
-            ChooseSection(Section::Travel); Sky2Hub_Host->open_page(Sky2Hub_Host->owner); break;
-        case Action::Return:
-            ChooseSection(Section::Return);
-            Sky2Hub_Host->open_page(Sky2Hub_Host->owner); break;
-        }
-    } catch (...) { CancelConfirmation(); }
-}
-const char* SKY2_CALL ActionTitle(void* data) noexcept {
-    switch (static_cast<Action>(reinterpret_cast<uintptr_t>(data))) {
-    case Action::Markers: return UiString(UiText::PauseResume);
-    case Action::Mode: return UiString(UiText::SwitchMode);
-    case Action::Hud: return HudLabel();
-    case Action::Chests: return UiString(UiText::MapList);
-    case Action::Reveal: return UiString(UiText::RevealMap);
-    case Action::Unvisited: return UiString(UiText::UnvisitedTravel);
-    case Action::Travel: return UiString(UiText::TravelList);
-    case Action::Return: return ReturnLabel();
-    }
-    return "";
-}
-int32_t SKY2_CALL ActionAvailable(void* data) noexcept {
-    if (activity != 1) return 0;
-    const auto action = static_cast<Action>(reinterpret_cast<uintptr_t>(data));
-    const auto status = ReadExplorationStatus();
-    if (action == Action::Reveal) return status.mapAvailable ? 1 : 0;
-    if (action == Action::Unvisited) return status.travelAvailable ? 1 : 0;
-    return 1;
-}
-
-int32_t SKY2_CALL ActionState(void* data) noexcept {
-    // 状态回调只读取业务当前值，不复用 Invoke，也不因首页刷新而切换开关或落盘。
-    // HUD 与动作调用均由宿主 Present 线程访问；其余值来自原子变量或状态快照。
-    switch (static_cast<Action>(reinterpret_cast<uintptr_t>(data))) {
-    case Action::Markers: return HostedEffectsEnabled() && g_enabled.load(std::memory_order_relaxed) ? 1 : 0;
-    case Action::Hud: return HostedEffectsEnabled() && hud ? 1 : 0;
-    case Action::Reveal: return HostedEffectsEnabled() && ReadExplorationStatus().mapEnabled ? 1 : 0;
-    case Action::Unvisited: {
-        const auto status = ReadExplorationStatus();
-        // 未访问地点的传送选项需要游戏线程安全刷新。开启与关闭请求都可能等待，
-        // 此时统一返回“待生效”；完成后必须报告 applied 值，不能把用户意图当结果。
-        return !HostedEffectsEnabled() ? 0 : (status.travelPending ? 2 : (status.travelEnabled ? 1 : 0));
-    }
-    // 统计口径切换与打开页面都不是布尔开关，不把“当前/继承”误标为关闭/开启。
-    default: return -1;
-    }
 }
 
 void DrawExploration() {
@@ -318,7 +248,7 @@ void DrawChestList(const Sky2Frame& frame) {
         for (size_t i = mapPage * kMapRows; i < std::min((mapPage + 1) * kMapRows, visible.size()); ++i) {
             const auto& row = counts.maps[visible[i]];
             const auto collected = row.Collected(g_mode.load());
-            // 路径和计数合并为紧凑行；长地名由宿主自动换行，不截断玩家辨认所需信息。
+            // 路径和计数合并为紧凑行；长地名由绘制控件自动换行，不截断辨认信息。
             ui.text_wrapped(Format("%s   ·   %u / %u   ·   %s %u", MapPath(*row.definition), collected,
                 row.total, UiString(UiText::MissingColumn), row.Remaining(g_mode.load())).c_str());
         }
@@ -459,7 +389,7 @@ void DrawTravel(const Sky2Frame& frame) {
     if (ui.button("travel.confirm", confirmLabel) && allowed) {
         if (confirmation.Press(destination.id, frame.time_ms, active, allowed, context)) {
             submissionRejected = !QueueRevisitTravel(destination.id, ++requestToken, context);
-            if (submissionRejected) Log("Hub travel request rejected; existing native safety checks retained.");
+            if (submissionRejected) Log("Panel travel request rejected; existing native safety checks retained.");
         } else submissionRejected = false;
     }
     ui.end_disabled();
@@ -484,168 +414,83 @@ void DrawTravel(const Sky2Frame& frame) {
 }
 } // namespace
 
-int32_t HubActivityState() noexcept { return activity; }
-const char* HubActivityMessage() noexcept {
-    // 每次查询按当前游戏语言返回静态文本；查询无副作用，也不临时分配借用字符串。
-    switch (activityNotice) {
-    case ActivityNotice::TripActive:
-        return Localize("请先完成返程，再停用宝箱模块。", "帰還を完了してから宝箱モジュールを停止してください。",
-            "Complete your return trip before disabling the chest module.", "請先完成返程，再停用寶箱模組。",
-            "Vor dem Deaktivieren des Truhenmoduls zuerst zurückkehren.", "Terminez le retour avant de désactiver le module de coffres.",
-            "Completa el regreso antes de desactivar el módulo de cofres.", "귀환을 완료한 후 보물 상자 모듈을 비활성화하세요.");
-    case ActivityNotice::Dispatched:
-        return Localize("传送已经派发，请待到达后再尝试停用。", "移動処理中です。到着後に停止してください。",
-            "Travel is already in progress. Try disabling after arrival.", "傳送已經派發，請待到達後再嘗試停用。",
-            "Die Reise läuft bereits. Erst nach der Ankunft deaktivieren.", "Le déplacement est en cours. Réessayez après l’arrivée.",
-            "El viaje está en curso. Intenta desactivar después de llegar.", "이동이 진행 중입니다. 도착한 후 비활성화하세요.");
-    case ActivityNotice::Restoring:
-        return Localize("正在恢复原生状态。请打开区域地图并等待；重新启用可取消停用。",
-            "ゲーム本来の状態に復元中です。エリアマップを開いてお待ちください。再度有効にすると停止を取り消せます。",
-            "Restoring native state. Open the area map and wait; enabling again cancels the stop.",
-            "正在恢復原生狀態。請開啟區域地圖並等待；重新啟用可取消停用。",
-            "Spielzustand wird wiederhergestellt. Gebietskarte öffnen und warten; erneutes Aktivieren bricht den Stopp ab.",
-            "Restauration en cours. Ouvrez la carte de zone et patientez ; réactiver annule l’arrêt.",
-            "Restaurando el estado original. Abre el mapa de zona y espera; reactivar cancela la desactivación.",
-            "원래 상태를 복원 중입니다. 지역 지도를 열고 기다리세요. 다시 활성화하면 중지 요청이 취소됩니다.");
-    case ActivityNotice::RestoreFailed:
-        return Localize("无法确认原生状态已恢复，模块仍保持启用。", "元の状態への復元を確認できないため、モジュールは有効のままです。",
-            "Native state restoration could not be verified. The module remains enabled.", "無法確認原生狀態已恢復，模組仍保持啟用。",
-            "Wiederherstellung nicht bestätigt. Das Modul bleibt aktiviert.", "La restauration n’a pas pu être vérifiée. Le module reste actif.",
-            "No se pudo verificar la restauración. El módulo sigue activo.", "원래 상태 복원을 확인할 수 없어 모듈을 활성 상태로 유지합니다.");
-    case ActivityNotice::TimedOut:
-        return Localize("停用等待超时，已保留原设置并恢复启用；请在区域地图稳定后重试。",
-            "停止待機がタイムアウトしました。設定を保持して再開しました。エリアマップが安定してから再試行してください。",
-            "Stopping timed out. Original settings were retained; retry once the area map is stable.",
-            "停用等待逾時，已保留原設定並恢復啟用；請在區域地圖穩定後重試。",
-            "Zeitlimit beim Stoppen. Einstellungen bleiben erhalten; bei stabiler Gebietskarte erneut versuchen.",
-            "Délai d’arrêt dépassé. Réglages conservés ; réessayez lorsque la carte de zone est stable.",
-            "La espera terminó. Se conservaron los ajustes; reintenta cuando el mapa de zona esté estable.",
-            "중지 대기 시간이 초과되었습니다. 기존 설정을 유지했습니다. 지역 지도가 안정되면 다시 시도하세요.");
-    default: return nullptr;
-    }
+void SetPanelUi(const Sky2UiApi* ui) noexcept { pageUi = ui; }
+const Sky2UiApi& PanelUi() noexcept { return Ui(); }
+bool PanelUiReady() noexcept { return pageUi != nullptr; }
+void ApplyPanelActions(uint32_t pending) noexcept {
+    // 输入层已检查前台与窗口所有权；这里只提交既有开关或页面意图。
+    // 传送目的地、返程票据与两次确认始终留在可见页面和安全游戏队列中。
+    try {
+        if (pending & ToggleMode) { g_mode.store(g_mode.load() == Mode::Current ? Mode::Inherited : Mode::Current); mapPage = 0; }
+        if (pending & ToggleEnabled) g_enabled.store(!g_enabled.load());
+        if (pending & ToggleMapReveal) ToggleExploration(ExplorationFeature::MapReveal);
+        if (pending & ToggleTravelUnlock) ToggleExploration(ExplorationFeature::TravelUnlock);
+        if (pending & ToggleRevisit) { ChooseSection(Section::Travel); g_panel.store(true); }
+    } catch (...) { CancelConfirmation(); }
 }
 
-namespace {
-void ResumeActivity() noexcept {
-    // 不重装挂钩、不重置返程历史，只重新开放有效业务；辅助开关的恢复仍需安全刷新。
-    RequestHostedTravelEnabled(savedTravelPreference);
-    g_hostedEffectsEnabled.store(true, std::memory_order_release);
-    ResumeHostedNativeTravel();
-    activity = 1;
-    stopObservedAt = 0;
-}
-void AdvanceActivity(uint64_t now) noexcept {
-    if (activity != 3) return;
-    if (!stopObservedAt) stopObservedAt = now;
-    const int exploration = HostedExplorationPauseStatus();
-    if (exploration < 0) {
-        ResumeActivity(); activityNotice = ActivityNotice::RestoreFailed; return;
-    }
-    if (!HostedNativeTravelPausePending() && exploration == 0) {
-        // 仅在传送交接已清理、菜单已恢复后关闭额外效果。此后仍保留原生观察回调，
-        // 恢复只需要打开门闩；没有正在执行的代码或游戏持有的地址被释放。
-        g_hostedEffectsEnabled.store(false, std::memory_order_release);
-        activity = 0; activityNotice = ActivityNotice::None; stopObservedAt = 0; return;
-    }
-    if (now >= stopObservedAt && now - stopObservedAt >= 15000) {
-        ResumeActivity(); activityNotice = ActivityNotice::TimedOut;
-    }
-}
-}
-
-int32_t HubRequestEnabled(int32_t enabled) noexcept {
-    if (enabled != 0 && enabled != 1) return 0;
-    if (enabled) {
-        if (activity != 1) ResumeActivity();
-        activityNotice = ActivityNotice::None;
-        return 1;
-    }
-    if (activity == 0 || activity == 3) return 1;
-    CancelConfirmation();
-    // 与实际派发共用 native 锁。若已进入不可撤回的换图，拒绝停用并保留返程能力。
-    if (!TryPauseHostedNativeTravel()) { activityNotice = ActivityNotice::Dispatched; return 0; }
-    const auto context = ReadRevisitNativeContext();
-    if (HostedRevisitTripActive() || RevisitRecoveryRequired(context)) {
-        ResumeHostedNativeTravel(); activityNotice = ActivityNotice::TripActive; return 0;
-    }
-    savedTravelPreference = ReadExplorationStatus().travelRequested;
-    RequestHostedTravelEnabled(false);
-    activity = 3; active = false; stopObservedAt = 0;
-    activityNotice = ActivityNotice::Restoring;
-    return 1;
-}
-
-bool RegisterHubActions() noexcept {
-    // 全局入口均为普通开关或打开页面；传送确认不注册为全局动作，不能绕过活动页。
-    constexpr const char* ids[]{"chest.toggle_markers", "chest.cycle_mode", "chest.toggle_hud", "chest.open_list",
-        "chest.toggle_map_reveal", "chest.toggle_unvisited", "chest.open_travel", "chest.open_return"};
-    for (uintptr_t i = 0; i < std::size(ids); ++i) {
-        auto* data = reinterpret_cast<void*>(i);
-        const uint32_t flags = SKY2_ACTION_GLOBAL | ((i == 0 || i == 3 || i == 6) ? SKY2_ACTION_FAVORITE : 0);
-        const Sky2Action action{sizeof(Sky2Action), ids[i], ActionTitle(data), flags, data,
-            &Invoke, &ActionAvailable, &ActionTitle, &ActionState};
-        if (!Sky2Hub_Host->register_action(Sky2Hub_Host->owner, &action)) return false;
-    }
-    return true;
-}
-
-void HubVisibilityChanged(int32_t visible) noexcept {
-    active = visible != 0 && activity == 1;
+void PanelVisibilityChanged(int32_t visible) noexcept {
+    active = visible != 0;
     if (!active) CancelConfirmation();
 }
-void HubTick(const Sky2Frame* frame) {
+int StandalonePageIndex() noexcept { return static_cast<int>(section); }
+const Counts& StandaloneCountsSnapshot() noexcept { return counts; }
+bool StandaloneHudVisible() noexcept { return hud; }
+void SetStandaloneHudVisible(bool value) noexcept { hud = value; }
+void StandaloneChoosePage(int page) noexcept {
+    // 不接受外壳传来的越界索引，避免未知页面被解释成可提交传送的页面。
+    if (page >= static_cast<int>(Section::Overview) && page <= static_cast<int>(Section::Return))
+        ChooseSection(static_cast<Section>(page));
+}
+void TickPanel(const Sky2Frame* frame) {
     if (!ValidFrame(frame)) return;
-    SetDisplayLanguage(HubLanguage(Sky2Hub_Host->language()));
-    AdvanceActivity(frame->time_ms);
-    active = activity == 1 && frame->foreground && frame->panel_open && frame->page_active;
+    active = frame->foreground && frame->panel_open && frame->page_active;
     const auto context = ReadRevisitNativeContext();
     confirmation.Observe(active && IsTravelSection(), CanSubmit(context), context);
-    if (activity == 1 && frame->time_ms - refreshed >= 250) { counts = ReadCounts(); refreshed = frame->time_ms; }
+    if (frame->time_ms - refreshed >= 250) { counts = ReadCounts(); refreshed = frame->time_ms; }
 }
-void HubDrawHeader(const Sky2Frame* frame) {
+void DrawPanelHeader(const Sky2Frame* frame) {
     if (!ValidFrame(frame) || !frame->panel_open || !frame->page_active) return;
-    // 宿主已在 tick_ui 更新业务快照；旧宿主的内嵌回退也先经过 HubDrawPage。
-    // 固定页头仅绘制/切换页签，不再次推进生命周期或读取原生游戏上下文。
-    if (activity != 1) return;
+    // 独立窗口先刷新业务快照。固定页头只绘制页签，不重复读取原生上下文。
     const auto& ui = Ui();
     ui.begin_disabled(!frame->foreground);
-    // 顶部页栏由宿主整体处理 LT/RT 与鼠标选择，不占用具体功能的黄色导航焦点。
+    // 顶部页栏由独立窗口整体处理 LT/RT 与鼠标选择，不占用具体功能的黄色导航焦点。
     // 所有标签一次返回目标页，再统一切换和取消旧确认，避免逐项绘制时页状态变化。
     const char* labels[]{OverviewLabel(), ListTabLabel(), SettingsLabel(), TravelTabLabel(), ReturnTabLabel()};
     constexpr const char* legacyIds[]{"page.overview", "page.chests", "page.settings", "page.travel", "page.return"};
-    constexpr int pageCount = static_cast<int>(std::size(legacyIds));
     const int previousPage = static_cast<int>(section);
+    int firstPage = 0;
+    int pageCount = static_cast<int>(std::size(legacyIds));
+    // 独立版使用左侧用途分组：宝箱概览/清单、设置、传送/返程。页头只展示
+    // 当前组内的页签，LB/RB 留给侧栏，LT/RT 不会跨组跳到另一类业务。
+    firstPage = previousPage >= static_cast<int>(Section::Travel) ? 3 : (previousPage == 2 ? 2 : 0);
+    pageCount = firstPage == 2 ? 1 : 2;
     int nextPage = previousPage;
     if (ui.size >= offsetof(Sky2UiApi, tab_bar) + sizeof(ui.tab_bar) && ui.tab_bar) {
-        nextPage = sky2ui::TabBar(ui, "page", labels, pageCount, previousPage);
+        const int selected = sky2ui::TabBar(ui, "page", labels + firstPage, pageCount, previousPage - firstPage);
+        // 先校验组内返回值再转换成全局页号；不能让非法值越过侧栏业务边界。
+        if (selected >= 0 && selected < pageCount) nextPage = firstPage + selected;
     } else {
-        // 老宿主没有页栏扩展，继续使用原控件 ID；口径选择仍是普通功能 Tab。
-        for (int index = 0; index < pageCount; ++index) {
-            if (index) ui.same_line();
+        // 绘制表没有页栏扩展，继续使用原控件 ID；口径选择仍是普通功能 Tab。
+        for (int index = firstPage; index < firstPage + pageCount; ++index) {
+            if (index != firstPage) ui.same_line();
             if (sky2ui::Tab(ui, legacyIds[index], labels[index], previousPage == index)) nextPage = index;
         }
     }
-    if (frame->foreground && nextPage >= 0 && nextPage < pageCount && nextPage != previousPage)
+    if (frame->foreground && nextPage >= firstPage && nextPage < firstPage + pageCount && nextPage != previousPage)
         ChooseSection(static_cast<Section>(nextPage));
     ui.spacing();
     ui.end_disabled();
 }
-void HubDrawPage(const Sky2Frame* frame) {
+void DrawPanelPage(const Sky2Frame* frame) {
     if (!ValidFrame(frame) || !frame->panel_open || !frame->page_active) return;
-    // 鼠标侧栏可能在宿主本帧 tick 后改变页面；绘制前用最终页面状态再次核对，
+    // 鼠标侧栏可能在本帧刷新快照后改变页面；绘制前用最终页面状态再次核对，
     // 防止新页沿用上一帧的 inactive 状态，或旧确认绕过当前原生上下文检查。
-    HubTick(frame);
+    TickPanel(frame);
     const auto& ui = Ui();
-    if (activity != 1) {
-        // 停用中也保留状态页，但不绘制会修改设置的功能控件；不能依赖宿主禁用样式
-        // 作为唯一守卫，旧动作及原生请求入口同样已经关闭准入。
-        sky2ui::Status(ui, HubActivityMessage() ? HubActivityMessage() : UiString(UiText::Paused), 2);
-        return;
-    }
-    // 新宿主先在固定 Header 调用 HubDrawHeader，再令此标记为真。旧宿主
-    // 没有尾部字段或没有执行页头回调时，继续在页面内部绘制原来的五项页签。
-    if (!sky2ui::HeaderDrawn(*frame)) HubDrawHeader(frame);
-    // 切出游戏后保留页面快照，但失焦已由 HubTick 撤销确认。控件只读，不能
+    // 外壳固定页头绘制后设置标记；测试或简化绘制表未调用页头时在此补绘。
+    if (!sky2ui::HeaderDrawn(*frame)) DrawPanelHeader(frame);
+    // 切出游戏后保留页面快照，但失焦已由 TickPanel 撤销确认。控件只读，不能
     // 把“仍在绘制”解释为活动页；传送提交另有 active 守卫，不依赖控件禁用。
     ui.begin_disabled(!frame->foreground);
     switch (section) {
@@ -655,27 +500,5 @@ void HubDrawPage(const Sky2Frame* frame) {
     case Section::Travel: case Section::Return: DrawTravel(*frame); break;
     }
     ui.end_disabled();
-}
-void HubDrawOverlay(const Sky2Frame* frame) {
-    // HUD 只提供精简信息，控制中心打开时隐藏，避免与统一面板重叠；左下角独立锚定。
-    if (!ValidFrame(frame) || !frame->foreground || frame->panel_open || !hud || activity != 1) return;
-    const auto& ui = Ui();
-    const float scale = std::max(0.5f, frame->scale);
-    const float font = 17.0f * scale;
-    const auto title = std::string(UiString(UiText::Title)) + " | " +
-        UiString(g_enabled.load() ? (g_mode.load() == Mode::Current ? UiText::ModeCurrent : UiText::ModeInherited) : UiText::Paused);
-    const auto details = !counts.valid ? std::string(UiString(UiText::WaitingData)) :
-        (!counts.map.empty() ? Format(UiString(g_mode.load() == Mode::Current ? UiText::AreaCurrent : UiText::AreaInherited),
-            g_mode.load() == Mode::Current ? counts.map_current : counts.map_inherited, counts.map_total) :
-         Format(UiString(g_mode.load() == Mode::Current ? UiText::CurrentOpened : UiText::InheritedOpened),
-            g_mode.load() == Mode::Current ? counts.current : counts.inherited));
-    float tw = 0, th = 0, dw = 0, dh = 0;
-    ui.measure_text(title.c_str(), font, &tw, &th); ui.measure_text(details.c_str(), font, &dw, &dh);
-    const float x = 18 * scale, y = std::max(0.0f, frame->height - (th + dh + 48 * scale));
-    const float width = std::min(std::max(tw, dw) + 24 * scale, frame->width - x);
-    ui.rect(x, y, x + width, y + th + dh + 26 * scale, 0xEE251A10, 8 * scale, 1, 1);
-    ui.rect(x, y + 8 * scale, x + 3 * scale, y + th + dh + 18 * scale, 0xFFD6C678, 2 * scale, 1, 1);
-    ui.draw_text(x + 12 * scale, y + 8 * scale, font, 0xFFE2DFC7, title.c_str());
-    ui.draw_text(x + 12 * scale, y + th + 14 * scale, font, 0xFFB3DCEB, details.c_str());
 }
 } // namespace tracker

@@ -5,7 +5,6 @@
 #include "exploration_logic.h"
 #include "travel_refresh.h"
 #include "tracker.h"
-#include "hosted_activity.h"
 #include <MinHook.h>
 #include <atomic>
 #include <cstring>
@@ -209,7 +208,7 @@ extern "C" bool Sky2BeforeBuildTravel(uintptr_t manager, uintptr_t caller) noexc
 // 精确限定直接分块调用：递归处理子节点时沿用原生 alpha，不再次查询区块或扩大处理范围。
 extern "C" float Sky2MapAlpha(void*, uintptr_t map, uintptr_t node, float alpha,
                               uintptr_t caller, uintptr_t chunk) noexcept {
-    if (!HostedEffectsEnabled() || !g_mapReveal.load(std::memory_order_relaxed) || caller != g_explorationBase + 0x3F139D)
+    if (!g_mapReveal.load(std::memory_order_relaxed) || caller != g_explorationBase + 0x3F139D)
         return alpha;
     uintptr_t chunks = 0, chunkNode = 0;
     uint64_t count = 0;
@@ -278,21 +277,5 @@ ExplorationStatus ReadExplorationStatus() noexcept {
     const auto refresh = g_travelRefresh.ReadStatus();
     return {g_mapAvailable.load(), g_travelAvailable.load(), g_mapReveal.load(), refresh.appliedEnabled,
             refresh.requestedEnabled, refresh.pending};
-}
-bool RequestHostedTravelEnabled(bool enabled) noexcept {
-    // 始终保留用户意图，包括恢复失败后不可用的辅助；可用性守卫仍阻止原生重建，
-    // 因而不能把“已记住开启偏好”误称为已生效。关闭会取消未消费的开启意图。
-    g_travelRefresh.RequestEnabled(enabled);
-    return !enabled || g_travelAvailable.load(std::memory_order_acquire);
-}
-int HostedExplorationPauseStatus() noexcept {
-    const auto state = g_travelRefresh.ReadStatus();
-    if (g_travelClosePending.load(std::memory_order_acquire) || state.inProgress) return 1;
-    if (!g_travelAvailable.load(std::memory_order_acquire)) {
-        // 原生恢复失败可能残留旧缓存；不能因为功能已标不可用就虚报整个模块已停用。
-        return state.appliedEnabled || g_travelUnlock.load(std::memory_order_acquire) ? -1 : 0;
-    }
-    return state.pending || state.requestedEnabled || state.appliedEnabled ||
-        g_travelUnlock.load(std::memory_order_acquire) ? 1 : 0;
 }
 }

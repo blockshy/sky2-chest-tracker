@@ -23,8 +23,4 @@ void InstallExploration(uintptr_t gameBase) noexcept;
 // UI 只切换 Mod 自己的原子开关，不直接执行地图跳转或变更游戏保存数据。
 void ToggleExploration(ExplorationFeature feature) noexcept;
 ExplorationStatus ReadExplorationStatus() noexcept;
-// Hub 只提交有效开关意图，仍由原生刷新线程恢复菜单；用户偏好由 Hub 生命周期保存。
-bool RequestHostedTravelEnabled(bool enabled) noexcept;
-// 0 已恢复原生状态，1 仍等待安全刷新/关闭，-1 无法证明恢复完成。
-int HostedExplorationPauseStatus() noexcept;
 }

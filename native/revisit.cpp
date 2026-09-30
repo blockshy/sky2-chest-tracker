@@ -129,15 +129,6 @@ bool AuthorizeRevisit(uint32_t target,const RevisitNativeContext& context,uint64
 }
 
 bool RevisitReady() noexcept { return ready.load(); }
-bool HostedRevisitTripActive() noexcept {
-    try {
-        const auto status = ReadRevisitNativeStatus();
-        const auto context = ReadRevisitNativeContext();
-        std::lock_guard<std::mutex> lock(sessionMutex);
-        RefreshSession(status, context);
-        return hasActive;
-    } catch (...) { return true; } // 无法证明安全时保留行程和返程入口。
-}
 bool RevisitContextAllowed(const RevisitNativeContext& context) noexcept {
     return context.valid && ValidRevisitChapter(context.chapter) &&
         context.region>=1 && context.region<=9;
@@ -175,7 +166,7 @@ bool RevisitTargetAllowed(uint32_t target,const RevisitNativeContext& context) n
 }
 bool QueueRevisitTravel(uint32_t target,uint64_t token,const RevisitNativeContext& expected) noexcept {
     try {
-        if (!HostedNativeTravelRequestsAllowed() || !token || !expected.browsing || expected.busy) return false;
+        if (!token || !expected.browsing || expected.busy) return false;
         RevisitReturnRecord anchor{};
         bool firstDeparture=false;
         {

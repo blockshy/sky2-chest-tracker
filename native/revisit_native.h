@@ -89,13 +89,6 @@ bool QueueRevisitNativeTravel(uint32_t target, uint64_t token,
 bool QueueRevisitNativeReturn(const RevisitReturnPoint& point, uint64_t token,
                               const RevisitNativeContext& expected) noexcept;
 void CancelRevisitNativeTravel() noexcept;
-// Hub 停用先关闭请求准入并取消未派发事务。与最终派发共用锁，已派发时拒绝，
-// 不能在检查与取消之间让游戏线程开始换图。停用期间继续运行原有清理挂钩。
-bool TryPauseHostedNativeTravel() noexcept;
-void ResumeHostedNativeTravel() noexcept;
-bool HostedNativeTravelPausePending() noexcept;
-bool HostedNativeTravelRequestsAllowed() noexcept;
-
 // 在现有 Sky2BeforeMapRefresh 的最前方调用。true 表示本帧已提交/拒绝请求，应跳过
 // 旧菜单输入；原生 Menu::Update、退出动画、对象销毁及换图消费者继续自然运行。
 bool BeforeRevisitNativeBrowse(uintptr_t menu) noexcept;

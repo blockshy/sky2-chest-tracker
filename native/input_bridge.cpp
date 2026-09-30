@@ -1,113 +1,302 @@
-// 只拦截游戏自身的 XInputGetState 导入槽，继续调用原入口以保留 Steam Input 的映射。
-// 不轮询另一套设备列表，不修改手柄振动，也不将 Mod 组合键传给其他应用。
+// 游戏 IAT 合作链保留 Steam 映射样本：各层先观察，只有最外层最终执行捕获。
+// 本模块只在健康前台窗口拥有输入时接管键鼠；后台保留页面，但不继续吞游戏输入。
 #include "input_bridge.h"
+#include "standalone_input_policy.h"
+#include "standalone_hotkeys.h"
+#include "standalone_ui/input.h"
 #include "tracker.h"
-#include <Xinput.h>
+#include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <iterator>
 
 namespace tracker {
+namespace {
 using GetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
-static GetStateFn g_nextState = nullptr;
-static SRWLOCK g_padLock = SRWLOCK_INIT;
-static PadFilter g_filters[4];
-static XINPUT_GAMEPAD g_outputs[4]{};
-static DWORD g_packets[4]{};
-static std::atomic<uint32_t> g_actions{0}, g_connected{0}, g_modifier{0};
-static std::atomic<bool> g_controller{false}, g_ready{false};
-static std::atomic<HWND> g_inputWindow{nullptr};
-static std::atomic<WNDPROC> g_nextWindowProc{nullptr};
+using AsyncKeyFn = SHORT(WINAPI*)(int);
+GetStateFn nextState = nullptr;
+AsyncKeyFn nextAsync = nullptr;
+SRWLOCK padLock = SRWLOCK_INIT;
+StandalonePadPolicy filters[4];
+XINPUT_GAMEPAD rawPads[4]{}, outputs[4]{};
+DWORD packets[4]{};
+uint64_t padTimes[4]{}, padGeneration[4]{};
+bool navigationReady[4]{};
+WORD previousButtons[4]{};
+bool shortcutsArmed[4]{};
+std::atomic<uint32_t> actions{0}, connected{0}, modifier{0};
+std::atomic<uint32_t> actionLatches{0};
+std::atomic<bool> controller{false}, ready{false}, keyboardTail{false}, resetPending{true};
+std::atomic<bool> availableBefore{false}, suspendedOwnership{false};
+std::atomic<uint64_t> lastFrame{0}, generation{1};
+std::atomic<uint64_t> bindingRevision{0};
+std::atomic<int> navigationDevice{-1};
+std::atomic<HWND> inputWindow{nullptr};
+std::atomic<WNDPROC> nextWindow{nullptr};
+std::atomic<InputWindowMessage> windowCallback{nullptr};
+std::atomic<uint32_t> panelMouseButtons{0};
+sky2solo::InputLease lease(1); // 宝箱稳定身份；与其它独立 Mod 的非零令牌保持不同。
+bool previousPanel = false;
+sky2solo::HotkeyKeyboardTracker keyboard;
+uint64_t keyboardGeneration = 0;
 
-static DWORD WINAPI FilteredGetState(DWORD index, XINPUT_STATE* state) noexcept {
-    const auto error = g_nextState(index, state);
+bool Foreground() noexcept { const auto window = inputWindow.load(); return window && GetForegroundWindow() == window; }
+void ResetInput() noexcept {
+    actions.store(0); actionLatches.store(0); keyboardTail.store(false); resetPending.store(true); generation.fetch_add(1);
+}
+bool Available() noexcept {
+    const bool current = Foreground() && sky2solo::FrameHealthy(lastFrame.load(), GetTickCount64());
+    const bool previous = availableBefore.exchange(current);
+    if (current != previous) {
+        if (!current && lease.Owns()) { suspendedOwnership.store(true); lease.Release(); }
+        ResetInput();
+    }
+    return current;
+}
+PadSample Sample(const XINPUT_GAMEPAD& pad) noexcept {
+    return {pad.wButtons, pad.bLeftTrigger, pad.bRightTrigger, pad.sThumbLX, pad.sThumbLY, pad.sThumbRX, pad.sThumbRY};
+}
+sky2solo::HotkeySnapshot Bindings() noexcept {
+    auto snapshot = sky2solo::ReadHotkeys();
+    // 提交配置后废弃所有旧输入世代。手柄与键盘各自等待本世代完全释放，
+    // 防止保存按钮或正在按住的新组合直接变成业务操作。
+    // IAT 与渲染线程可能交错读取快照。版本只允许前进；拿到过期快照的线程
+    // 重新读取，不能把已提交的新版本写回旧值并重复清空另一线程的输入。
+    auto observed = bindingRevision.load();
+    for (;;) {
+        if (snapshot.revision < observed) { snapshot = sky2solo::ReadHotkeys(); continue; }
+        if (snapshot.revision == observed) break;
+        if (bindingRevision.compare_exchange_weak(observed, snapshot.revision)) { ResetInput(); break; }
+    }
+    return snapshot;
+}
+bool KeyboardCaptured() noexcept {
+    if (!Available()) return false;
+    const auto owner = sky2solo::InputOwner();
+    if (owner && !lease.Owns()) return false;
+    return (g_panel.load() && lease.Owns()) || keyboardTail.load();
+}
+DWORD WINAPI FilteredGetState(DWORD index, XINPUT_STATE* state) noexcept {
+    sky2solo::GamepadCall call;
+    const auto error = nextState(index, state);
     if (index >= 4 || !state) return error;
-    AcquireSRWLockExclusive(&g_padLock);
+    const bool available = Available();
+    const auto bindings = Bindings();
+    const bool owns = lease.Owns();
+    AcquireSRWLockExclusive(&padLock);
     if (error != ERROR_SUCCESS) {
-        g_filters[index].Reset();
-        g_modifier.fetch_and(~(1u << index));
-        if ((g_connected.fetch_and(~(1u << index)) & ~(1u << index)) == 0) g_controller.store(false);
-        ReleaseSRWLockExclusive(&g_padLock);
-        return error;
+        filters[index].Reset(); rawPads[index] = {}; padTimes[index] = 0; navigationReady[index] = false;
+        shortcutsArmed[index] = false; previousButtons[index] = 0;
+        modifier.fetch_and(~(1u << index)); connected.fetch_and(~(1u << index));
+        int lost = static_cast<int>(index); navigationDevice.compare_exchange_strong(lost, -1);
+        if (!connected.load()) controller.store(false);
+    } else {
+        connected.fetch_or(1u << index);
+        const auto currentGeneration = generation.load();
+        if (padGeneration[index] != currentGeneration) {
+            filters[index].Reset(); navigationReady[index] = false; padGeneration[index] = currentGeneration;
+            shortcutsArmed[index] = false; previousButtons[index] = 0;
+        }
+        rawPads[index] = state->Gamepad; padTimes[index] = GetTickCount64();
+        int absent = -1; navigationDevice.compare_exchange_strong(absent, static_cast<int>(index));
+        const auto raw = Sample(state->Gamepad);
+        uint32_t requested = 0;
+        if (!available) shortcutsArmed[index] = false;
+        else if (!shortcutsArmed[index]) shortcutsArmed[index] = StandaloneNeutral(raw);
+        else requested = StandaloneInputActions(sky2solo::HotkeyPadPressedMask(bindings, raw.buttons, previousButtons[index]));
+        previousButtons[index] = raw.buttons;
+        const auto result = filters[index].Update(raw, g_panel.load() && owns, available,
+            sky2solo::InputOwner() != 0 && !owns, requested);
+        navigationReady[index] = result.navigate;
+        if (raw.buttons & kView) modifier.fetch_or(1u << index); else modifier.fetch_and(~(1u << index));
+        // 允许连接但闲置的槽 0 让位给真实使用的槽 1。完全相同的镜像样本
+        // 不反复更换导航来源；动作按组合跨槽锁存，直至各新鲜样本均释放。
+        const int selected = navigationDevice.load();
+        if (available && result.activity && !StandaloneNeutral(raw) &&
+            (selected < 0 || selected == static_cast<int>(index) ||
+             std::memcmp(&rawPads[selected], &rawPads[index], sizeof(XINPUT_GAMEPAD)) != 0))
+            navigationDevice.store(static_cast<int>(index));
+        uint32_t held = 0;
+        for (unsigned slot = 0; slot < 4; ++slot)
+            if (padGeneration[slot] == currentGeneration && padTimes[slot] &&
+                GetTickCount64() >= padTimes[slot] && GetTickCount64() - padTimes[slot] <= 250)
+                held |= StandaloneInputActions(sky2solo::HotkeyPadHeldMask(bindings, rawPads[slot].wButtons));
+        actionLatches.fetch_and(held);
+        if (available) {
+            if (result.activity) controller.store(true);
+            const auto allowed = sky2solo::InputOwner() ? (result.actions & TogglePanel) : result.actions;
+            const auto already = actionLatches.fetch_or(allowed);
+            actions.fetch_or(allowed & ~already);
+        }
+        // 合作调用的内层不改样本；原始 View 单按补发也通过同一聚合协议传到
+        // 最外层。捕获优先于补发，关闭窗口的按键尾巴不会再次弹出原生地图。
+        call.RequestCapture(result.capture);
+        call.RequestViewReplay(result.replayView);
+        call.Filter(state->Gamepad);
+        if (call.Outermost()) {
+            if (std::memcmp(&outputs[index], &state->Gamepad, sizeof(state->Gamepad))) { outputs[index] = state->Gamepad; ++packets[index]; }
+            state->dwPacketNumber = packets[index];
+        }
     }
-    g_connected.fetch_or(1u << index);
-    const auto& p = state->Gamepad;
-    const PadSample raw{p.wButtons, p.bLeftTrigger, p.bRightTrigger, p.sThumbLX, p.sThumbLY, p.sThumbRX, p.sThumbRY};
-    const HWND window = g_inputWindow.load();
-    const bool foreground = window && GetForegroundWindow() == window;
-    const auto filtered = g_filters[index].Update(raw, foreground);
-    if (filtered.activity) g_controller.store(true);
-    if (filtered.modifier) g_modifier.fetch_or(1u << index);
-    else g_modifier.fetch_and(~(1u << index));
-    g_actions.fetch_or(filtered.actions);
-    const auto& f = filtered.game;
-    XINPUT_GAMEPAD output{f.buttons, f.leftTrigger, f.rightTrigger, f.lx, f.ly, f.rx, f.ry};
-    // 补发 View 的按下与松开可能发生在同一原生数据包内，因此维护输出状态自己的序号。
-    if (std::memcmp(&g_outputs[index], &output, sizeof(output))) {
-        g_outputs[index] = output;
-        ++g_packets[index];
-    }
-    state->Gamepad = output;
-    state->dwPacketNumber = g_packets[index];
-    ReleaseSRWLockExclusive(&g_padLock);
-    static std::atomic<bool> reported{false};
-    if (!reported.exchange(true)) Log("Controller input callback verified.");
+    ReleaseSRWLockExclusive(&padLock);
     return error;
 }
-
-static LRESULT CALLBACK ObserveWindow(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
-    if (GetForegroundWindow() == window) {
-        bool keyboardMouse = ((message == WM_KEYDOWN || message == WM_SYSKEYDOWN) && !(lparam & (1LL << 30))) ||
-            message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN || message == WM_MBUTTONDOWN ||
-            message == WM_XBUTTONDOWN || message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL;
-        if (message == WM_INPUT) {
-            // 原始输入由游戏注册；只读取已有消息，不额外注册设备，也不阻止游戏再次读取。
-            // 用真实鼠标增量判断切换，排除游戏重置光标位置引起的 WM_MOUSEMOVE。
-            RAWINPUT raw{};
-            UINT size = sizeof(raw);
-            const auto read = GetRawInputData(reinterpret_cast<HRAWINPUT>(lparam), RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER));
-            if (read != UINT(-1) && read >= sizeof(RAWINPUTHEADER) && raw.header.dwType == RIM_TYPEMOUSE)
-                keyboardMouse |= raw.data.mouse.lLastX != 0 || raw.data.mouse.lLastY != 0 || raw.data.mouse.usButtonFlags != 0;
-        }
-        if (keyboardMouse) g_controller.store(false);
+SHORT WINAPI FilteredAsyncKey(int key) noexcept {
+    const auto value = nextAsync(key);
+    if (KeyboardCaptured()) return 0;
+    // 六项动作均可改成普通字母/数字，匹配的业务主键也必须从游戏轮询中
+    // 隔离。先筛选可能命中的主键，再读取一次实体快照，避免逐键全量扫描。
+    // 窗口入口可切换所有权；普通业务仅在没有合作窗口时参与拦截。
+    const auto bindings = sky2solo::ReadHotkeys();
+    if (!Available()) return value;
+    const bool business = !g_panel.load() && !sky2solo::InputOwner();
+    uint32_t candidates = 0;
+    for (size_t index = 0; index < std::min(bindings.count, sky2solo::MaxHotkeys); ++index)
+        if ((index == 0 || business) && key != 0 && key == bindings.bindings[index].key) candidates |= 1u << index;
+    if (candidates) {
+        const auto physical = sky2solo::ReadHotkeyKeyboardState();
+        for (size_t index = 0; index < std::min(bindings.count, sky2solo::MaxHotkeys); ++index)
+            if ((candidates & (1u << index)) && sky2solo::HotkeyKeyHeld(bindings.bindings[index], physical)) return 0;
     }
-    if (message == WM_KILLFOCUS) { g_actions.store(0); g_controller.store(false); }
-    return CallWindowProcW(g_nextWindowProc.load(), window, message, wparam, lparam);
+    return value;
 }
-
-void AttachInputWindow(HWND window) noexcept {
-    g_inputWindow.store(window);
-    if (g_nextWindowProc.load()) return;
-    // 只观察输入来源，所有消息仍交回原窗口过程；不接管游戏的鼠标、文本或快捷键处理。
-    const auto previous = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window, GWLP_WNDPROC));
-    if (!previous) { Log("Input source observer unavailable."); return; }
-    g_nextWindowProc = previous;
-    SetLastError(0);
-    const auto installed = SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&ObserveWindow));
-    if (!installed && GetLastError()) { g_nextWindowProc = nullptr; Log("Input source observer failed."); }
-    else if (installed) g_nextWindowProc = reinterpret_cast<WNDPROC>(installed);
+bool InputMessage(UINT message) noexcept {
+    return (message >= WM_KEYFIRST && message <= WM_KEYLAST) ||
+        (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) || message == WM_INPUT;
+}
+uint32_t MouseButton(UINT message, WPARAM wparam, bool down) noexcept {
+    if (message == UINT(down ? WM_LBUTTONDOWN : WM_LBUTTONUP) || (down && message == WM_LBUTTONDBLCLK)) return 1;
+    if (message == UINT(down ? WM_RBUTTONDOWN : WM_RBUTTONUP) || (down && message == WM_RBUTTONDBLCLK)) return 2;
+    if (message == UINT(down ? WM_MBUTTONDOWN : WM_MBUTTONUP) || (down && message == WM_MBUTTONDBLCLK)) return 4;
+    if (message == UINT(down ? WM_XBUTTONDOWN : WM_XBUTTONUP) || (down && message == WM_XBUTTONDBLCLK))
+        return HIWORD(wparam) == XBUTTON1 ? 8 : 16;
+    return 0;
+}
+LRESULT CALLBACK ObserveWindow(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    const bool available = Available();
+    bool keyboardMouse = ((message == WM_KEYDOWN || message == WM_SYSKEYDOWN) && !(lparam & (1LL << 30))) ||
+        message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN || message == WM_MBUTTONDOWN ||
+        message == WM_XBUTTONDOWN || message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL || message == WM_MOUSEMOVE;
+    if (available && message == WM_INPUT) {
+        // 游戏已注册 Raw Input 时读取其真实鼠标增量，不另行注册设备或读取
+        // 另一套系统输入。这样连接着手柄时移动鼠标仍能恢复鼠标提示与光标。
+        RAWINPUT raw{}; UINT size = sizeof(raw);
+        const auto read = GetRawInputData(reinterpret_cast<HRAWINPUT>(lparam), RID_INPUT, &raw, &size, sizeof(RAWINPUTHEADER));
+        if (read != UINT(-1) && read >= sizeof(RAWINPUTHEADER) && raw.header.dwType == RIM_TYPEMOUSE)
+            keyboardMouse |= raw.data.mouse.lLastX != 0 || raw.data.mouse.lLastY != 0 || raw.data.mouse.usButtonFlags != 0;
+    }
+    if (available && keyboardMouse) controller.store(false);
+    if (message == WM_KILLFOCUS) {
+        if (lease.Owns()) { suspendedOwnership.store(true); lease.Release(); }
+        availableBefore.store(false); ResetInput(); controller.store(false);
+        const auto held = panelMouseButtons.exchange(0);
+        if (auto callback = windowCallback.load(); callback && held) {
+            // 实际松开可能发生在别的窗口；仅补齐本后端曾接收的鼠标按下，
+            // 不能把游戏自身的隐藏期 mouse-up 发给本后端并释放游戏捕获。
+            const UINT releases[]{WM_LBUTTONUP, WM_RBUTTONUP, WM_MBUTTONUP, WM_XBUTTONUP, WM_XBUTTONUP};
+            for (unsigned index = 0; index < 5; ++index) if (held & (1u << index))
+                callback(window, releases[index], index < 3 ? 0 : MAKEWPARAM(0, index == 3 ? XBUTTON1 : XBUTTON2), 0);
+        }
+    }
+    const auto released = MouseButton(message, wparam, false);
+    const bool paired = (panelMouseButtons.load() & released) != 0;
+    if (auto callback = windowCallback.load(); callback &&
+        ((available && g_panel.load() && lease.Owns()) || message == WM_KILLFOCUS || paired)) {
+        panelMouseButtons.fetch_or(MouseButton(message, wparam, true)); panelMouseButtons.fetch_and(~released);
+        callback(window, message, wparam, lparam);
+    }
+    if (paired) return 0;
+    if (InputMessage(message) && KeyboardCaptured()) return message == WM_INPUT ? DefWindowProcW(window, message, wparam, lparam) : 0;
+    return CallWindowProcW(nextWindow.load(), window, message, wparam, lparam);
+}
+bool ReplaceSlot(void** slot, void* replacement, void* previous) noexcept {
+    DWORD protection = 0;
+    if (!previous || !VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &protection)) return false;
+    const bool installed = InterlockedCompareExchangePointer(slot, replacement, previous) == previous;
+    DWORD ignored = 0; VirtualProtect(slot, sizeof(void*), protection, &ignored);
+    return installed;
+}
 }
 
 bool InstallInputBridge(uintptr_t base) noexcept {
-    // 当前 EXE 唯一的 XInputGetState 调用位于 0x6A55A8；槽位可能已经由 Steam 重定向。
-    // 校验调用指令后保存原槽目标，用原子比较交换安装，避免覆盖安装期间的新挂钩。
-    const unsigned char expected[] = {0xFF, 0x15, 0x3A, 0x61, 0x21, 0x00};
-    if (std::memcmp(reinterpret_cast<void*>(base + 0x6A55A8), expected, sizeof(expected))) return false;
+    const unsigned char expected[]{0xFF, 0x15, 0x3A, 0x61, 0x21, 0x00};
+    if (!base || std::memcmp(reinterpret_cast<void*>(base + 0x6A55A8), expected, sizeof(expected))) return false;
     auto slot = reinterpret_cast<void**>(base + 0x8BB6E8);
-    void* previous = *slot;
-    if (!previous) return false;
-    DWORD protection = 0;
-    if (!VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &protection)) return false;
-    g_nextState = reinterpret_cast<GetStateFn>(previous);
-    const bool installed = InterlockedCompareExchangePointer(slot, reinterpret_cast<void*>(&FilteredGetState), previous) == previous;
-    DWORD unused = 0;
-    VirtualProtect(slot, sizeof(void*), protection, &unused);
-    g_ready.store(installed);
-    Log(installed ? "Controller import bridge installed." : "Controller import bridge conflict.");
-    return installed;
+    bool installed = false;
+    // 多个 ASI 的初始化线程可能同时接入。CAS 失败后重新读取真实链尾，
+    // 仅在自己的入口尚未发布时重试，不覆盖后来者，也不形成自调用环。
+    for (unsigned attempt = 0; attempt < 16 && !installed; ++attempt) {
+        nextState = reinterpret_cast<GetStateFn>(*slot);
+        installed = nextState && ReplaceSlot(slot, reinterpret_cast<void*>(&FilteredGetState), reinterpret_cast<void*>(nextState));
+    }
+    if (!installed) return false;
+    auto keys = reinterpret_cast<void**>(base + 0x8BB5D8);
+    installed = false;
+    for (unsigned attempt = 0; attempt < 16 && !installed; ++attempt) {
+        nextAsync = reinterpret_cast<AsyncKeyFn>(*keys);
+        installed = nextAsync && ReplaceSlot(keys, reinterpret_cast<void*>(&FilteredAsyncKey), reinterpret_cast<void*>(nextAsync));
+    }
+    if (!installed) { ReplaceSlot(slot, reinterpret_cast<void*>(nextState), reinterpret_cast<void*>(&FilteredGetState)); return false; }
+    ready.store(true);
+    Log("Standalone panel input installed: cooperative game XInput and keyboard IAT chain.");
+    return true;
 }
-
-uint32_t TakeInputActions() noexcept { return g_actions.exchange(0); }
-bool UsingController() noexcept { return g_controller.load(); }
-bool InputBridgeReady() noexcept { return g_ready.load(); }
-bool ControllerModifierHeld() noexcept { return g_modifier.load() != 0; }
+void AttachInputWindow(HWND window, InputWindowMessage callback) noexcept {
+    windowCallback.store(callback);
+    if (nextWindow.load()) return;
+    inputWindow.store(window);
+    const auto previous = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window, GWLP_WNDPROC));
+    if (!previous) return;
+    nextWindow.store(previous); SetLastError(0);
+    const auto installed = SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&ObserveWindow));
+    if (!installed && GetLastError()) { nextWindow.store(nullptr); inputWindow.store(nullptr); Log("Panel window input unavailable."); }
+    else if (installed) nextWindow.store(reinterpret_cast<WNDPROC>(installed));
+}
+void PumpInputKeyboard() noexcept {
+    const bool available = Available();
+    const auto bindings = Bindings();
+    const auto currentGeneration = generation.load();
+    if (keyboardGeneration != currentGeneration) { keyboard.Reset(); keyboardGeneration = currentGeneration; }
+    const auto physical = sky2solo::ReadHotkeyKeyboardState();
+    const auto matched = keyboard.Update(bindings, physical, available);
+    auto value = StandaloneInputActions(matched);
+    if (g_panel.load() || sky2solo::InputOwner()) value &= TogglePanel;
+    if (value) { controller.store(false); actions.fetch_or(value); }
+    if (keyboardTail.load()) {
+        if (!sky2solo::AnyHotkeyKeyboardDown(physical) || (sky2solo::InputOwner() && !lease.Owns())) keyboardTail.store(false);
+    }
+}
+void SynchronizeInputPanel() noexcept {
+    const bool available = Available();
+    bool open = g_panel.load();
+    if (open && !previousPanel) {
+        if (!available || !ready.load() || !lease.Claim()) { g_panel.store(false); open = false; }
+        else { suspendedOwnership.store(false); ResetInput(); }
+    } else if (open && available && !lease.Owns()) {
+        // 前台恢复只在没有其他窗口接管时续接自己的租约；如果用户已打开
+        // 另一个 Mod，旧窗口关闭但保留其页面与位置，不能下一帧又抢回输入。
+        if (suspendedOwnership.exchange(false) && !sky2solo::InputOwner()) lease.Claim();
+        else { g_panel.store(false); open = false; resetPending.store(true); }
+    }
+    if (!open && previousPanel) { lease.Release(); suspendedOwnership.store(false); keyboardTail.store(available); resetPending.store(true); }
+    previousPanel = open;
+}
+void SetInputFrameHealth(bool healthy) noexcept { lastFrame.store(healthy ? GetTickCount64() : 0); if (!healthy) Available(); }
+bool InputPanelInteractive() noexcept { return Available() && g_panel.load() && lease.Owns(); }
+bool ConsumeInputReset() noexcept { return resetPending.exchange(false); }
+bool ReadInputPad(XINPUT_GAMEPAD& output) noexcept {
+    output = {}; bool fresh = false;
+    AcquireSRWLockShared(&padLock);
+    const int index = navigationDevice.load();
+    if (index >= 0 && index < 4 && navigationReady[index] && padGeneration[index] == generation.load() &&
+        GetTickCount64() >= padTimes[index] && GetTickCount64() - padTimes[index] <= 250) {
+        output = rawPads[index]; fresh = true;
+    }
+    ReleaseSRWLockShared(&padLock);
+    return fresh;
+}
+uint32_t TakeInputActions() noexcept { return actions.exchange(0); }
+bool UsingController() noexcept { return controller.load(); }
+bool InputBridgeReady() noexcept { return ready.load(); }
+bool ControllerModifierHeld() noexcept { return modifier.load() != 0; }
 }

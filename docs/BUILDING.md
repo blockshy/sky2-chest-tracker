@@ -1,6 +1,19 @@
 # 构建指南
 
-本页对应宝箱 **0.6.0** 及兼容 **Sky2 Mod Hub 0.5.0** 的模块接入。原独立版与 ASI 插件版持续保留，两者默认提供全传送；有 SDK 时可额外生成 HubModule。保留剧情限制的构建仅用于开发对照。原两版预编译包见 [宝箱 Releases](https://github.com/blockshy/sky2-chest-tracker/releases)，模块整合包见 [Hub 0.5.0](https://github.com/blockshy/sky2-mod-hub/releases/tag/v0.5.0)。本地构建和打包不会自动发布版本，也不会安装 DLL 或修改游戏存档。
+## 当前独立窗口构建
+
+ASI、Standalone 使用仓库内 `native/standalone_ui/` 绘制、导航和合作输入源码。CMake 只生成这两种宝箱分发；所有界面依赖均在本仓库，不要求相邻项目。
+
+Windows 完整测试增加独立页面分组、真实输入桥、公共窗口和跨 DLL 合作输入。离屏截图目标 `tracker_standalone_visual` 使用真实字体/窗口/页面，业务端是值对象替身；运行如下命令生成到忽略的构建目录，不启动游戏：
+
+```powershell
+.\build-release\tracker_standalone_visual.exe .\build-release\standalone-visual
+```
+
+截图程序使用本仓库的生产页面，覆盖中文常规窗口、720p 清单与传送、展开说明后的右摇杆外层滚动、德语长文案，以及快捷键栏目和 HUD 内容／位置设置。测试目标不进入玩家包。
+
+
+本页对应宝箱 **0.6.0** 的当前源码。独立版与 ASI 插件版默认提供全传送，保留剧情限制的构建仅用于开发对照。已发布的预编译包见 [Releases](https://github.com/blockshy/sky2-chest-tracker/releases)。本地构建和打包不会自动发布版本，也不会安装 DLL 或修改游戏存档。
 
 ## 环境
 
@@ -26,7 +39,6 @@ py -3 -m venv .venv
 4. 显式配置全传送策略，使用 NMake 与 MSVC 清理重编译，共用 `tracker_runtime` 对象生成 `build-release/xinput1_4.dll` 与 `build-release/Sky2ChestTracker.asi`。
 5. 运行两种传送策略的 CTest 及公开 Python 测试；任何步骤失败都会停止。
 
-如果相邻目录存在 Hub 0.5.0 SDK，CMake 首次配置还会生成 `Sky2ChestTracker.module.dll`。显式禁用模块目标、指定其它 SDK 目录及三目标构建命令见 [Hub 模块构建](HUB_MODULE.md#构建和打包)。SDK 不包含本项目需要的游戏目录数据，仍须从自己的游戏安装生成。
 
 首次构建需要网络下载开源依赖。已经存在的依赖目录必须处于锁定提交且没有修改；脚本不会覆盖你的本地修改。
 可通过 `-DependencyDirectory` 指定已准备好的依赖父目录，通过 `-BuildDirectory` 指定构建目录；不要与其他项目混用。
@@ -112,7 +124,7 @@ Windows x64 + MSVC 下另运行记录文件 I/O、双策略会话和生产 MASM 
 
 ## 打包
 
-公开发布前应完成完整构建、自动测试和适用范围的实机验证。当前宝箱版本为 0.6.0；开发对照 DLL 不应混入正式包。以下原版与 Loader 包分别打包，不能把公共 Loader 当成独立版 DLL。新增模块包使用独立的 `Package-HubModule.ps1`，不改变这些包的载荷。
+公开发布前应完成完整构建、自动测试和适用范围的实机验证。当前宝箱版本为 0.6.0；开发对照 DLL 不应混入正式包。以下原版与 Loader 包分别打包，不能把公共 Loader 当成独立版 DLL。
 
 ```powershell
 # 独立版：根目录代理；Distribution 的默认值也是 Standalone。
@@ -121,8 +133,6 @@ Windows x64 + MSVC 下另运行记录文件 I/O、双策略会话和生产 MASM 
 .\tools\Package-Mod.ps1 -Distribution Plugin -DllPath '.\build-release\Sky2ChestTracker.asi'
 # 公共加载器：独立包、独立文件归属，使用前一步核验过的官方文件。
 .\tools\Package-Mod.ps1 -Distribution Loader -DllPath '.\.deps\ultimate-asi-loader-9.7.4\xinput1_4.dll'
-# 新增模块包：需要已构建的 Hub 模块 DLL，既不包含宿主也不包含 Loader。
-.\tools\Package-HubModule.ps1 -DllPath '.\build-release\Sky2ChestTracker.module.dll'
 ```
 
 分别输出 `Sky2ChestTracker-0.6.0-Standalone.zip`、`Sky2ChestTracker-0.6.0-ASI.zip`、`Sky2ModLoader-UAL-9.7.4.zip`，默认位于 `release/`，各有同名 `.sha256` 文件。脚本按白名单打包二进制、安装脚本、玩家 README、四份指南（`INSTALLATION.md`、`USAGE.md`、`TRAVEL.md`、`ASI_LOADER.md`）、包内校验清单和许可证；诊断探针、`PLUGIN_TESTING.md` 与开发资料不进入玩家包。
@@ -133,7 +143,7 @@ Windows x64 + MSVC 下另运行记录文件 I/O、双策略会话和生产 MASM 
 
 安装需要解压整个 ZIP。宝箱包根目录 `Install-Mod.ps1` 根据包内类型安装独立版或 ASI；公共 Loader 使用 `installer/Install-Loader.ps1`。手动复制 `dist/` 的全部内容即可；安装脚本、文档及校验清单不在 `dist/` 中，不生成游戏目录收据。手动路径与数据迁移见 [ASI 指南](ASI_LOADER.md)。
 
-原三类包的 `dist/` 各含两个文件：独立版 DLL＋`Sky2ChestTracker/LICENSES.txt`，插件 ASI＋`plugins/Sky2ChestTracker/LICENSES.txt`，Loader DLL＋`plugins/Sky2ChestTracker/UltimateASILoader.LICENSE.txt`。新增 HubModule 包的 `dist/` 含模块 DLL、`.module.ini` 与许可三项；没有原版安装脚本，安装方式见 [Hub 模块说明](HUB_MODULE.md)。合并许可逐字保留项目、第三方来源、Dear ImGui、MinHook/HDE 和 ED9ModManager 文本；Loader 的 MIT 许可仍单独管理。
+两个宝箱包及独立 Loader 包的 `dist/` 各含两个文件：独立版 DLL＋`Sky2ChestTracker/LICENSES.txt`，插件 ASI＋`plugins/Sky2ChestTracker/LICENSES.txt`，Loader DLL＋`plugins/Sky2ChestTracker/UltimateASILoader.LICENSE.txt`。合并许可逐字保留项目、第三方来源、Dear ImGui、MinHook/HDE 和 ED9ModManager 文本；Loader 的 MIT 许可仍单独管理。
 
 包内 `installer/manifest.json` 使用 schema 2，包含 `type`、`product`、`version`、`path`、`sha256`、`exe_sha256` 以及两项 `files`；`installer/known-files.json` 使用 schema 1，提供历史路径、哈希、产品和类型供识别及旧资料清理。它们只属于安装包，不能复制进游戏作为新的归属凭证。
 

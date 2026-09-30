@@ -88,7 +88,6 @@ struct Fixture {
         sceneRoot.fill(0);player.fill(0);actor.fill(0);placeRows.fill(0);
         placeHolder.fill(0);placeFile.fill(0);placeHeaders.fill(0);
         tracker::base=reinterpret_cast<uintptr_t>(image);
-        tracker::hostedAcceptRequests=true;
         tracker::available.store(true);
         tracker::status={};tracker::published={};tracker::expectedContext={};
         tracker::publishedPoint={};tracker::requestedReturn={};tracker::arrivalPoint={};
@@ -396,21 +395,6 @@ int RunUnrestricted(Fixture& f) {
 int main() {
     Fixture f;
     if(!f.image) return 2;
-    // 直接检验生产准入锁与原生退出结果，不以 UI 的禁用样式替代生命周期安全。
-    f.Reset();
-    Check(tracker::TryPauseHostedNativeTravel() && !tracker::HostedNativeTravelRequestsAllowed(),
-          "pause closes native request admission");
-    Check(!tracker::QueueRevisitNativeTravel(99,7001,tracker::ReadRevisitNativeContext()),
-          "paused native queue rejects new requests");
-    tracker::ResumeHostedNativeTravel();f.Queue();f.Close();
-    Check(tracker::TryPauseHostedNativeTravel() && tracker::HostedNativeTravelPausePending(),
-          "cancelled closing handoff remains pending until native result is withdrawn");
-    tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
-    Check(!tracker::HostedNativeTravelPausePending() && f.MenuResult()==0,
-          "production update clears cancelled handoff before lifecycle can finish");
-    f.Reset();f.Queue();f.Close();f.Transfer();f.Dispatch();
-    Check(!tracker::TryPauseHostedNativeTravel() && tracker::HostedNativeTravelRequestsAllowed(),
-          "already dispatched travel refuses pause and retains admission for recovery");
     f.Reset();
 #if SKY2_UNRESTRICTED_TRAVEL
     return RunUnrestricted(f);

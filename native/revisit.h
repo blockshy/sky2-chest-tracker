@@ -6,8 +6,6 @@
 namespace tracker {
 void InstallRevisit(uintptr_t gameBase, const std::wstring& folder) noexcept;
 bool RevisitReady() noexcept;
-// 生命周期检查真实活动行程，不因暂时无效的场景/章节快照把已有返程记录误判为空。
-bool HostedRevisitTripActive() noexcept;
 // 序章至终章均可申请；自由行动、稳定地图以及具体目的地的原生规则由游戏线程复核。
 bool RevisitContextAllowed(const RevisitNativeContext& context) noexcept;
 // 第8/9章的旧场景保留原有手动恢复策略；早期正常剧情场景不因此禁止记录新出发点。

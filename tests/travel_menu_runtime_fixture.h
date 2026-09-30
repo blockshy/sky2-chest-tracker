@@ -465,21 +465,6 @@ void TestTravelMenu(TestResult& result, uintptr_t image, uintptr_t inaccessible)
     tracker::g_travelRefresh.ToggleRequest();
     result.Check(execute() && tracker::g_travelAvailable.load() && fixture.areaBuilds == 0,
                  "关闭后仅剩其他分组入口时，活动分组零项正常关图且不调用子列表构建");
-    // 实际菜单必须先恢复原生候选才能完成停止；暂停后上下文失效也不主动重建。
-    fixture.Reset(4, true);
-    result.Check(tracker::RequestHostedTravelEnabled(false) && tracker::HostedExplorationPauseStatus()==1,
-                 "Hub 关闭意图等待游戏线程，不能把已应用的开启状态直接改为关闭");
-    result.Check(execute() && tracker::HostedExplorationPauseStatus()==0,
-                 "原生菜单重建完成后才确认探索辅助已恢复");
-    tracker::g_hostedEffectsEnabled.store(false);
-    tracker::g_travelRefresh.ContextChanged();
-    const auto pausedScripts=fixture.scriptCalls;
-    result.Check(!execute() && fixture.scriptCalls==pausedScripts,
-                 "已停用时保留普通原生菜单流程，不因缓存失效主动执行重建");
-    tracker::RequestHostedTravelEnabled(true);
-    tracker::g_hostedEffectsEnabled.store(true);
-    result.Check(execute() && tracker::ReadExplorationStatus().travelEnabled,
-                 "恢复原偏好仍由真实安全菜单刷新重新启用");
     tracker::g_travelApi = {};
     g_menuFixture = nullptr;
 }

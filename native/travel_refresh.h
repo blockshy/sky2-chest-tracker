@@ -32,16 +32,6 @@ struct TravelRefreshStatus {
 
 class TravelRefreshState {
 public:
-    // 生命周期指定有效状态时保留请求序列协议；同目标不增加序号，也不从 UI
-    // 线程直接改 applied。CAS 防止将与其它请求交错的旧读值写回。
-    void RequestEnabled(bool enabled) noexcept {
-        auto request = requested_.load(std::memory_order_acquire);
-        while (((request & 1u) != 0) != enabled) {
-            if (requested_.compare_exchange_weak(request, request + 1,
-                    std::memory_order_acq_rel, std::memory_order_acquire)) return;
-        }
-    }
-
     // 每次真实按下沿增加一次序号，低位同时表示开／关。一次原子操作同时提交状态
     // 和顺序，不存在“先写 bool、后写 generation”导致原生线程读取到混合值的问题。
     // 初始序号为零：默认关闭，并视为当前原生菜单已经处于未修改状态。

@@ -3,7 +3,6 @@
 #include "revisit_forest_rules.h"
 #include "revisit_event_guard.h"
 #include "tracker.h"
-#include "hosted_activity.h"
 #include <MinHook.h>
 #include <array>
 #include <atomic>
@@ -101,7 +100,7 @@ bool ForestDisableTemporaryArgument(uintptr_t address) noexcept {
 // 原生接着自己设置 EventBox.disabled(bit2)、刷新碰撞并正常返回 VM。成功/失败
 // 旧剧情、WrongWay 和 Hint 均不会启动，218..222、BP 与物品/宝箱记录没有任何补写。
 extern "C" void Sky2ForestBeforeEnable(uintptr_t context) noexcept {
-    if (!HostedEffectsEnabled() || !g_forestInstalled.load(std::memory_order_relaxed)) return;
+    if (!g_forestInstalled.load(std::memory_order_relaxed)) return;
     uint32_t count=0,enable=0,nameTag=0;
     int32_t top=0;
     uintptr_t stack=0,script=0,scriptBytes=0;
