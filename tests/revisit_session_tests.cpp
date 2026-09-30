@@ -4,6 +4,8 @@
 #include <cstdio>
 namespace tracker {
 static RevisitNativeStatus fixtureStatus{};
+static RevisitNativeContext fixtureContext{};
+static bool fixtureAdmission = true;
 static RevisitReturnPoint fixturePoint{};
 static bool fixtureDisk=true,fixtureCapture=true,fixtureQueue=true,fixtureAvailable=true;
 static bool fixtureOrdinaryAvailable=true;
@@ -22,6 +24,8 @@ void SetRevisitEventGuardActive(bool) noexcept {}
 void SetRevisitNativeAuthorize(RevisitNativeAuthorize) noexcept {}
 void InstallRevisitNative(uintptr_t) noexcept {}
 RevisitNativeStatus ReadRevisitNativeStatus() noexcept { return fixtureStatus; }
+RevisitNativeContext ReadRevisitNativeContext() noexcept { return fixtureContext; }
+bool HostedNativeTravelRequestsAllowed() noexcept { return fixtureAdmission; }
 bool RevisitNativeTargetAvailable(uint32_t,const RevisitNativeContext&) noexcept { return fixtureAvailable; }
 bool RevisitNativeOrdinaryTargetAvailable(uint32_t,const RevisitNativeContext&) noexcept { return fixtureOrdinaryAvailable; }
 bool RevisitNativeReturnPhaseAllowed(const RevisitReturnPoint& point,const RevisitNativeContext&) noexcept {
@@ -69,6 +73,14 @@ int main() {
     check(QueueRevisitTravel(99,3,source),"first departure submitted");
     const auto first=ReadRevisitReturnStatus(source);
     check(first.active && first.record.point.xyz[0]==-528,"first original position active");
+    // 失效场景快照不可掩盖已有行程；暂停准入必须在写记录/排队之前生效。
+    fixtureContext={};
+    check(HostedRevisitTripActive(),"invalid context preserves active trip for lifecycle safety");
+    fixtureAdmission=false;
+    const auto admissionWrites=fixtureWrites,admissionQueues=fixtureQueues;
+    check(!QueueRevisitTravel(99,33,source) && fixtureWrites==admissionWrites && fixtureQueues==admissionQueues,
+        "closed lifecycle admission rejects before persistence or queueing");
+    fixtureAdmission=true;
     check(AuthorizeRevisit(99,source,3) && !AuthorizeRevisit(99,source,2) && !AuthorizeRevisit(100,source,3),
         "game thread authorization binds exact request token and target");
     check(!QueueRevisitTravel(101,4,source),"pending departure cannot be replaced");

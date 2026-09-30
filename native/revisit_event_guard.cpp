@@ -2,6 +2,7 @@
 #include "revisit_event_guard.h"
 #include "revisit_event_guard_rules.h"
 #include "tracker.h"
+#include "hosted_activity.h"
 #include <MinHook.h>
 #include <array>
 #include <atomic>
@@ -162,7 +163,7 @@ extern "C" void Sky2GuardTBoxScriptStart(uintptr_t caller, uintptr_t tableRow,
                                          uint32_t count, uintptr_t originalRsp) noexcept {
     using namespace revisit_eventguard;
     // 通用脚本入口调用频繁；其它来源先以地址比较退出，不读取地图、表格或存档。
-    if (caller != g_revisitGuardBase + kTBoxStartReturnRva ||
+    if (!HostedEffectsEnabled() || caller != g_revisitGuardBase + kTBoxStartReturnRva ||
         !g_revisitGuardInstalled.load(std::memory_order_relaxed) ||
         !g_revisitGuardActive.load(std::memory_order_relaxed) ||
         count != 1 ||

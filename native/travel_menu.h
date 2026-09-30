@@ -18,9 +18,9 @@ struct NativeTravelApi {
 };
 // 集中保存已验证的原生入口，方便本地合成测试替换；不保存跨帧的游戏对象指针。
 static NativeTravelApi g_travelApi{};
-// 仅由原生更新线程访问，不缓存游戏指针。极少见的菜单字段写入失败时，阻止空列表的
+// 仅由原生更新线程写入，Hub 生命周期可以只读观察；不缓存游戏指针。字段写入失败时，阻止空列表的
 // 原状态继续运行，直到能够提交原生退出请求；一旦提交便立即清除此保护。
-static bool g_travelClosePending = false;
+static std::atomic<bool> g_travelClosePending{false};
 
 struct TravelDisplayIdentity {
     uint32_t type = 0, id = 0;
@@ -439,6 +439,8 @@ extern "C" bool Sky2BeforeMapRefresh(uintptr_t menu) noexcept {
     // 回访成功提交后须跳过本帧旧菜单输入；不与同帧的目的地列表重建交叉执行。
     // 原生关闭失败的恢复分支优先，避免接管已经处于故障收尾中的菜单。
     if (BeforeRevisitNativeBrowse(menu)) return true;
+    // 完全停用后不再主动重建普通菜单；上述交接清理仍须保留到停止完成。
+    if (!HostedEffectsEnabled()) return false;
     if (!g_travelAvailable.load(std::memory_order_relaxed) || !g_travelRefresh.ReadStatus().pending) return false;
     TravelMenuContext context{};
     if (!ReadTravelMenu(menu, context)) return false;

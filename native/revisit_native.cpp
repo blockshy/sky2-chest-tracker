@@ -52,6 +52,8 @@ ULONGLONG publishedAt = 0;
 // 已写入原生退出结果时，单独保留交接身份。即使状态改为过期/拒绝，也必须先
 // 清除该结果或在原生消费者处拦截，不能忘记它而让原生下一帧自行传送。
 bool dispatchArmed = false;
+// 只在 stateMutex 下访问；Hub 暂停的是新请求准入，现有取消结果仍由原生线程收尾。
+bool hostedAcceptRequests = true;
 // 这些地址数值仅作身份比较；每次访问对象均重新从当前原生调用/全局关系读取。
 // 不通过缓存地址访问对象，防止关图后分配器复用地址时误操作另一张菜单。
 uintptr_t handoffMenuIdentity = 0, handoffMinimapIdentity = 0;
@@ -1093,10 +1095,32 @@ void CancelRevisitNativeTravel() noexcept {
         status.phase=RevisitNativePhase::Rejected;
     // 退出已提交后仍保留armed身份，由更新线程撤回结果或由消费者拒绝该请求。
 }
+bool TryPauseHostedNativeTravel() noexcept {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    if (status.phase == RevisitNativePhase::Dispatched) return false;
+    hostedAcceptRequests = false;
+    if (status.phase == RevisitNativePhase::Queued || status.phase == RevisitNativePhase::ClosingMap)
+        status.phase = RevisitNativePhase::Rejected;
+    return true;
+}
+void ResumeHostedNativeTravel() noexcept {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    hostedAcceptRequests = true;
+}
+bool HostedNativeTravelPausePending() noexcept {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    // Rejected 不代表原生退出结果已经撤回，必须同时等待独立的 armed 身份消失。
+    return dispatchArmed || status.phase == RevisitNativePhase::Queued ||
+        status.phase == RevisitNativePhase::ClosingMap || status.phase == RevisitNativePhase::Dispatched;
+}
+bool HostedNativeTravelRequestsAllowed() noexcept {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    return hostedAcceptRequests;
+}
 bool QueueRevisitNativeTravel(uint32_t target, uint64_t token,
                               const RevisitNativeContext& expected) noexcept {
     std::lock_guard<std::mutex> lock(stateMutex);
-    if (!token || !available.load() || !authorize.load() ||
+    if (!hostedAcceptRequests || !token || !available.load() || !authorize.load() ||
         !RevisitNativeTargetAvailable(target,expected) || !expected.browsing || expected.busy ||
         !SameContext(expected,published) || !published.browsing || GetTickCount64()-publishedAt>1000 ||
         !expected.browseIdentity || expected.browseIdentity!=published.browseIdentity ||
@@ -1113,7 +1137,7 @@ bool QueueRevisitNativeTravel(uint32_t target, uint64_t token,
 bool QueueRevisitNativeReturn(const RevisitReturnPoint& point, uint64_t token,
                               const RevisitNativeContext& expected) noexcept {
     std::lock_guard<std::mutex> lock(stateMutex);
-    if (!token || !available.load() || !authorize.load() || !nativeLoad ||
+    if (!hostedAcceptRequests || !token || !available.load() || !authorize.load() || !nativeLoad ||
         !ValidRevisitReturnPoint(point) || point.yawRadians<0 || point.yawRadians>=6.2831854820251464844f ||
         point.chapter!=expected.chapter || !SupportedSource(expected) || !RevisitNativeReturnPhaseAllowed(point,expected) ||
         !expected.browsing || expected.busy || !SameContext(expected,published) || !published.browsing ||

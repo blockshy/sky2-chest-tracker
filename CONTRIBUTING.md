@@ -5,7 +5,7 @@
 
 ## 报告问题
 
-在 Issues 中提供 Mod 版本、独立版／ASI 分发类型、游戏 EXE 哈希、Windows／手柄布局、复现步骤、预期与实际表现。ASI 问题同时提供 Loader 版本及其他插件名称，日志路径见 [ASI 与 Loader 指南](docs/ASI_LOADER.md)。
+在 Issues 中提供 Mod 版本、Standalone／ASI／HubModule 分发类型、游戏 EXE 哈希、Windows／手柄布局、复现步骤、预期与实际表现。ASI 问题同时提供 Loader 版本及其他插件名称；Hub 问题补充宿主版本、页面和绑定。日志路径及输入差异见 [ASI 与 Loader 指南](docs/ASI_LOADER.md) 和 [Hub 模块说明](docs/HUB_MODULE.md)。
 不要上传游戏资源包、完整存档、内存转储或含个人信息的完整日志。
 
 ## 提交修改
@@ -16,6 +16,6 @@
 - 用 `git diff --cached --name-only` 检查提交范围，不能强制加入 `.gitignore` 排除的私有资料。
 - 新游戏版本适配必须重新核对运行时布局，不能仅替换 EXE 哈希。
 - 公共 PowerShell 脚本保留 UTF-8 BOM，兼容 Windows PowerShell 5.1 的中文解析；路径和文件归属修改需回归手动／脚本混用及外来文件保留。
-- 两种分发共用功能代码，修改入口、数据路径或安装脚本时按 [插件共存验证](docs/PLUGIN_TESTING.md) 核对，不能把诊断探针共存扩大为任意 Mod 兼容。
+- 原 ASI 与 Standalone 持续保留；新增 HubModule 复用业务代码和安全队列，不另建 ImGui、Present、WndProc 或输入钩子。修改入口、数据路径或安装脚本时按 [插件共存验证](docs/PLUGIN_TESTING.md) 与 [Hub 验证](docs/TESTING.md#hub-模块验证) 核对，不能把诊断探针共存扩大为任意 Mod 兼容。
 
 提交 PR 时简要说明解决的问题、最终行为、验证方式及仍未验证的环境。

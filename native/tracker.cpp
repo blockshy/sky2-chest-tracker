@@ -1,6 +1,7 @@
 // 《空之轨迹 the 2nd》宝箱地图插件。
 // 宝箱模块读取原生标志；可选探索模块独立控制，不修改物品、奖励、成就或保存数据。
 #include "tracker.h"
+#include "hosted_activity.h"
 #include "input_bridge.h"
 #include "exploration.h"
 #include "revisit.h"
@@ -17,6 +18,9 @@
 #include <cstring>
 #include <fstream>
 #include <vector>
+#ifdef SKY2_HUB_MODULE
+#include "sky2_hub.h"
+#endif
 
 namespace tracker {
 HMODULE g_module = nullptr;
@@ -82,7 +86,7 @@ static const ChestRecord* RecordFromTable(uintptr_t rowPointer) noexcept {
 }
 
 static uint32_t __fastcall SelectMapIcon(void* manager, const void* tableRow) noexcept {
-    if (!g_enabled.load(std::memory_order_relaxed)) return g_originalMapIcon(manager, tableRow);
+    if (!HostedEffectsEnabled() || !g_enabled.load(std::memory_order_relaxed)) return g_originalMapIcon(manager, tableRow);
     const auto* chest = RecordFromTable(reinterpret_cast<uintptr_t>(tableRow));
     if (!chest) return g_originalMapIcon(manager, tableRow);
     uintptr_t flags = 0;
@@ -101,7 +105,7 @@ static uint32_t __fastcall SelectMapIcon(void* manager, const void* tableRow) no
 }
 
 static uint32_t __fastcall SelectIcon(void* behavior) noexcept {
-    if (!g_enabled.load(std::memory_order_relaxed)) return g_originalIcon(behavior);
+    if (!HostedEffectsEnabled() || !g_enabled.load(std::memory_order_relaxed)) return g_originalIcon(behavior);
     uintptr_t owner = 0;
     uint32_t actorFlags = 0, openedId = 0, inheritedId = 0;
     const auto self = reinterpret_cast<uintptr_t>(behavior);
@@ -164,13 +168,15 @@ static bool CheckExecutable() {
     return std::strcmp(hex, kExeSha256) == 0;
 }
 
-static DWORD WINAPI Initialize(void* context) noexcept {
+// 三种分发共享业务安装过程；模块版由宿主工作线程同步调用，独立入口仍使用
+// 自己的一次性初始化线程。返回值只表示必需的宝箱地图功能是否完成安装。
+static bool InitializeRuntime(void* context) noexcept {
     try {
         // 在线程实际运行、加载锁已释放后固定本模块；退出进程时由系统统一回收。
         // 地图虚表会指向本模块，禁止中途卸载以免留下悬空函数指针。
         HMODULE pinned = nullptr;
         if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-                               reinterpret_cast<LPCWSTR>(&Start), &pinned)) return 0;
+                               reinterpret_cast<LPCWSTR>(&InitializeRuntime), &pinned)) return false;
         wchar_t path[MAX_PATH]{};
         // 两种分发均以游戏 EXE 定位，但使用相互独立的数据目录。ASI 数据与插件
         // 放在同一个 plugins 树下；旧 ASI 布局仅由安装器显式迁移，运行时不导入。
@@ -178,7 +184,13 @@ static DWORD WINAPI Initialize(void* context) noexcept {
         const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
         if (length == 0 || length >= MAX_PATH) return 0;
         const bool pluginMode = context != nullptr;
+#ifdef SKY2_HUB_MODULE
+        // 宿主复用原 ASI 数据目录；返程票据不移动、不复制，也不自动读取独立版记录。
+        if (!Sky2Hub_Host || !Sky2Hub_Host->data_directory) return false;
+        g_folder = Sky2Hub_Host->data_directory;
+#else
         g_folder = RuntimeDataDirectory(std::wstring_view(path, length), pluginMode);
+#endif
         if (!PrepareRuntimeDataDirectory(g_folder, pluginMode)) return 0;
         wchar_t guardName[96]{};
         swprintf_s(guardName, L"Local\\Sky2ChestTracker.Process.%lu", GetCurrentProcessId());
@@ -205,10 +217,16 @@ static DWORD WINAPI Initialize(void* context) noexcept {
         if (!ReadBytes(g_base + 0x2C6BC0, actual, sizeof(actual)) || std::memcmp(expected, actual, sizeof(actual))) {
             Log("Icon function conflict; all hooks skipped."); return 0;
         }
+        // 独立版/ASI 保留原绘制与输入；模块版只能使用已就绪的宿主界面和钩子服务。
+        // 模块不创建第二份 ImGui、Present 或 XInput 链，因此不会再吞掉其它模块的按键。
+#ifdef SKY2_HUB_MODULE
+        if (MH_Initialize() != MH_OK) return false;
+#else
         // 面板安装成功后才启用地图修改，否则用户无法辨认当前选择的是哪种统计口径。
         if (!InstallOverlay()) { Log("Overlay initialization failed; map hook skipped."); return 0; }
         // 输入接入失败时保留键盘操作与地图功能，并在日志中说明，不扩大挂钩范围。
         if (!InstallInputBridge(g_base)) Log("Controller shortcuts unavailable; keyboard remains active.");
+#endif
         InstallExploration(g_base);
         InstallRevisit(g_base, g_folder);
         // 正式地图使用此表驱动函数；同时保留下方对象虚表挂钩，覆盖按对象取图标的路径。
@@ -232,10 +250,21 @@ static DWORD WINAPI Initialize(void* context) noexcept {
         Log(revisit_policy::kUnrestricted ?
             "Sky2ChestTracker 0.6.0 active: chest tracking, exploration and full travel." :
             "Sky2ChestTracker 0.6.0 active: chest tracking, exploration and story-restricted travel.");
+        return true;
     } catch (...) { Log("Initialization failed; exception contained."); }
-    return 0;
+    return false;
 }
 
+#ifdef SKY2_HUB_MODULE
+bool InitializeHostedRuntime() noexcept {
+    // 宿主保证 initialize 只调用一次；入口层另有 once_flag 防止重复第三方查询。
+    return InitializeRuntime(reinterpret_cast<void*>(uintptr_t{1}));
+}
+#else
+static DWORD WINAPI Initialize(void* context) noexcept {
+    InitializeRuntime(context);
+    return 0;
+}
 void Start(bool pluginMode) noexcept {
     static std::once_flag once;
     try {
@@ -247,4 +276,5 @@ void Start(bool pluginMode) noexcept {
         });
     } catch (...) {}
 }
+#endif
 }

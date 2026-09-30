@@ -1,5 +1,17 @@
 # 实现结构
 
+## 新增 Hub 模块入口
+
+`native/module_entry.cpp` 提供版本化 C ABI `Sky2Module_Query`，宿主线程同步完成宝箱业务初始化。模块复用原 ASI 数据目录，不迁移返程记录。`native/hub_panel.cpp` 使用宿主 UI 函数表组织可交互页面和 HUD，`native/hub_ui_state.h` 独立验证确认撤销与语言映射。
+
+模块目标不编入原 `overlay.cpp`、`input_bridge.cpp`、XInput 代理或私有 ImGui/MinHook；它通过 SDK 的 MinHook 适配头将业务挂钩登记到宿主。原 ASI/Standalone 继续使用原输入、渲染和静态依赖，实现永久独立维护。三种入口共用 EXE 校验、重复实例保护、地图业务和游戏线程传送队列；模块显示层没有取得直接调用原生换图函数的权限。
+
+模块动作使用稳定命名 ID。全局传送/返程动作仅打开页面；确认只在活动页面由两次独立控件激活完成，失焦/离页/切换选择/上下文变化均取消。清单、精简 HUD 和探索开关互相独立。详情见 [Hub 模块说明](HUB_MODULE.md)。
+
+Hub 0.5.0 的可选 `draw_header` 只绘制五项页签；宿主先调用 `tick_ui`，再在固定页头绘制，随后以 `Sky2Frame.header_drawn` 通知 `draw_page` 不再内嵌页签。`content_size` 提供 Main 固定可视尺寸，列表只据此分配高度，不由自动增高卡片的尺寸反推。所有尾部字段均先检查 `size`；旧宿主仍可使用原 ABI 前缀、内嵌页签和原列表高度。
+
+实时停用先关闭请求准入并撤销确认，再等原生交接和探索菜单恢复。`native/hosted_activity.h` 只在安全收尾完成后旁路附加效果；DLL、虚表地址及跳板保留，活动返程或已派发传送不能直接停用。状态查询只读实际状态，等待与失败由页面说明。此门闩在原 ASI / Standalone 中保持默认开启，原快捷键和渲染实现继续独立运行。
+
 ## 模块
 
 | 文件 | 职责 |

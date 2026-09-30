@@ -117,6 +117,20 @@ void TestContextAndCancellation(TestResult& result) {
 
 int main() {
     TestResult result;
+    // 定向关闭用于 Hub 软停用；重复相同请求不能改变序号，恢复原偏好也遵守安全消费。
+    tracker::TravelRefreshState lifecycle;
+    lifecycle.RequestEnabled(true);
+    const auto enabledTicket = lifecycle.ReadStatus().requestedTicket;
+    lifecycle.RequestEnabled(true);
+    result.Check(lifecycle.ReadStatus().requestedTicket == enabledTicket, "same explicit state is idempotent");
+    const auto applied = lifecycle.TryBegin(true); lifecycle.Complete(applied);
+    lifecycle.RequestEnabled(false);
+    result.Check(lifecycle.ReadStatus().pending && lifecycle.ReadStatus().appliedEnabled,
+                 "stop request waits for native restoration without rewriting applied state");
+    const auto disabled = lifecycle.TryBegin(true); lifecycle.Complete(disabled);
+    lifecycle.RequestEnabled(true);
+    result.Check(lifecycle.ReadStatus().requestedEnabled && !lifecycle.ReadStatus().appliedEnabled,
+                 "resume queues prior preference without claiming it already applied");
     TestDefaultAndUnsafe(result);
     TestCoalescing(result);
     TestRequestDuringRebuild(result);

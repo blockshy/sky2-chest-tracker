@@ -31,4 +31,8 @@ struct Counts {
 void Start(bool pluginMode = false) noexcept;
 Counts ReadCounts();
 bool InstallOverlay();
+#ifdef SKY2_HUB_MODULE
+// 仅模块版使用：宿主已准备界面与共享挂钩，在宿主初始化线程同步安装业务。
+bool InitializeHostedRuntime() noexcept;
+#endif
 }
