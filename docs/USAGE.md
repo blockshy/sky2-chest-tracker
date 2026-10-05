@@ -1,8 +1,8 @@
 # 使用说明
 
-本页介绍 **0.6.0 独立版与 ASI 插件版共用的功能和键位**，原有 0.5.0 的操作保持一致。安装和文件冲突处理见 [安装指南](INSTALLATION.md)，插件依赖与迁移见 [ASI 指南](ASI_LOADER.md)，完整传送与返程流程见 [全传送指南](TRAVEL.md)，项目概览见 [首页](../README.md)。
+本页介绍 **0.6.1 独立版与 ASI 插件版共用的功能和键位**，既有操作保持一致。下载见 [0.6.1 Release](https://github.com/blockshy/sky2-chest-tracker/releases/tag/v0.6.1)，安装和文件冲突处理见 [安装指南](INSTALLATION.md)，插件依赖与迁移见 [ASI 指南](ASI_LOADER.md)，完整传送与返程流程见 [全传送指南](TRAVEL.md)。
 
-当前 `main` 为游戏 **1.4.0 / Steam build 25721473** 的兼容性开发版，尚未发布新 Release；现有 0.6.0 下载附件仍只支持旧游戏。新版返程记录位于各分发数据目录内的 `revisit-return-25721473.dat` 与 `revisit-history-25721473/`；旧 `revisit-return.dat`／`revisit-history/` 保留但不自动导入或跨 EXE 执行，请勿重命名旧文件绕过校验。
+0.6.1 适配**游戏界面版本 Ver.1.04**（EXE 文件版本 **1.4.0.0**，Steam build **25721473**），0.6.0 附件仍只支持旧游戏。新版返程记录位于各分发数据目录内的 `revisit-return-25721473.dat` 与 `revisit-history-25721473/`；旧 `revisit-return.dat`／`revisit-history/` 保留但不自动导入或跨 EXE 执行，请勿重命名旧文件绕过校验。
 
 ## 目录
 
@@ -48,7 +48,7 @@
 
 八语文本已编入 DLL／ASI，不新增语言配置或翻译文件。字体使用本机 Windows 已安装的字体，不分发游戏或系统字体。若中日韩文字出现方框、缺字或字体缺失提示，请安装 Windows 对应的简体中文／繁体中文／日文／韩文补充字体后重启游戏。修改游戏语音语言或重新复制 Mod 无法补齐缺少的字形。
 
-若文字语言切换后面板仍未跟随，请先确认安装了当前八语构建，而非同为 0.6.0 的旧包，再核对游戏内的文字语言设置。按 [安装指南](INSTALLATION.md#开始前) 使用配套哈希区分构建。
+若文字语言切换后面板仍未跟随，请确认游戏 Ver.1.04 已安装 0.6.1，再核对游戏内的文字语言设置。按 [安装指南](INSTALLATION.md#开始前) 使用配套哈希核验安装包。
 
 ## 宝箱标记与统计
 
@@ -115,7 +115,7 @@ Mod 不把这些临时显示批量写成探索或到访记录；实际行走、�
 
 完整键位、前往／返回步骤、特殊地点位置及重启后的历史选择见 [全传送指南](TRAVEL.md)。
 
-0.6.0 插件版使用独立的 `plugins/Sky2ChestTracker/` 数据目录，首次没有独立版的返程历史，也不会自动导入。切换分发前先在原版本完成返程或准备正常流程地点的存档；旧日志和返程记录保留在 `Sky2ChestTracker/`。迁移步骤见 [ASI 指南](ASI_LOADER.md)。
+插件版使用独立的 `plugins/Sky2ChestTracker/` 数据目录，首次没有独立版的返程历史，也不会自动导入。切换分发前先在原版本完成返程或准备正常流程地点的存档；旧日志和返程记录保留在 `Sky2ChestTracker/`。迁移步骤见 [ASI 指南](ASI_LOADER.md)。
 
 ## 手柄与输入切换
 
@@ -152,8 +152,8 @@ Mod 不把这些临时显示批量写成探索或到访记录；实际行走、�
 
 ## 范围与问题反馈
 
-旧游戏构建上的独立版宝箱状态、读档回退、地区统计、清单、Xbox 组合键、热切换和重连已有实机验证；地图全显、未到访传送点及地图内即时刷新已有用户本机正常反馈。旧版全传送收到一周目末期、二周目前期相关地点及往返反馈，旧版 0.6.0 ASI 也曾在本机 Steam Input／Xbox ABXY 环境确认与诊断探针同时加载及一次传送返程正常。这些历史结果不能代替 1.4.0 回归，也不覆盖所有地点、章节和其他 Mod 组合；适用范围见 [ASI 指南](ASI_LOADER.md#故障排查与兼容范围)。
+本次通过 29 组 CTest、88 项 Python 测试及 10 个 UAL 隔离场景，并获得用户在游戏 Ver.1.04 中功能正常的实机确认。其他 Mod 的界面、输入和挂钩组合仍需分别验证，适用范围见 [ASI 指南](ASI_LOADER.md#故障排查与兼容范围)。
 
-1.4.0 已完成与待完成的验证见 [兼容性记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/GAME_1_4_0_COMPATIBILITY.md)，通用步骤见 [测试说明](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/TESTING.md)。尚未逐箱走访全部 566 个宝箱；其他手柄类型、自定义布局、DXVK、第三方注入工具、全部语言切换和所有剧情组合未全面覆盖。
+Ver.1.04 已完成与待完成的验证见 [兼容性记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/GAME_1_4_0_COMPATIBILITY.md)，通用步骤见 [测试说明](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/TESTING.md)。尚未逐箱走访全部 566 个宝箱；其他手柄类型、自定义布局、DXVK、第三方注入工具、全部语言切换和所有剧情组合未全面覆盖。
 
 反馈问题时提供 Mod 版本、独立版／ASI 分发类型、游戏构建、地图／章节、输入设备、操作步骤及完整提示。独立版日志位于游戏目录的 `Sky2ChestTracker/tracker.log`，ASI 日志位于 `plugins/Sky2ChestTracker/tracker.log`；附相关片段前移除个人信息，无需公开整份存档或内存快照。

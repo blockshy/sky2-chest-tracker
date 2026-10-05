@@ -2,7 +2,7 @@
 .SYNOPSIS
 显式安装公共 Ultimate ASI Loader；只允许迁移已发布的独立宝箱代理。
 .DESCRIPTION
-不由宝箱安装器隐式调用。可识别历史白名单中的 0.5.0/0.6.0 独立代理，不读取
+不由宝箱安装器隐式调用。可识别已核验白名单中的独立代理，不读取
 或迁移独立版返程记录；只有 ASI 安装器负责迁移旧 ASI 数据目录。
 #>
 [CmdletBinding(SupportsShouldProcess=$true)]

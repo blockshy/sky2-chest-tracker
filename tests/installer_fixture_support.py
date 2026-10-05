@@ -94,7 +94,7 @@ class InstallerFixture(unittest.TestCase):
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
             files.append(dict(path=path, sha256=digest(data)))
-        manifest = dict(schema=2, type=kind, product=product, version='9.7.4' if kind == 'asi-loader' else '0.6.0',
+        manifest = dict(schema=2, type=kind, product=product, version='9.7.4' if kind == 'asi-loader' else '0.6.1',
                         path=binary, sha256=digest(PAYLOADS[kind]), exe_sha256=EXE_HASH, files=files)
         self.write_json(package / 'installer/manifest.json', manifest)
         known = []

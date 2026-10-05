@@ -1,8 +1,8 @@
 # 构建指南
 
-本页对应以 **0.6.0 为基础的游戏 1.4.0 兼容性开发版**。`main` 从 0.6.0 继续适配，原有未发布开发提交保留在 `dev`。本次修改尚未发布新 Release；[0.6.0 附件](https://github.com/blockshy/sky2-chest-tracker/releases/tag/v0.6.0) 仍只支持旧 build 25386012。
+本页对应 **0.6.1**，适配游戏 **Ver.1.04**（EXE 文件版本 **1.4.0.0**，Steam build **25721473**），预编译包见 [0.6.1 Release](https://github.com/blockshy/sky2-chest-tracker/releases/tag/v0.6.1)。本次从 0.6.0 继续适配，原有未发布开发提交保留在 `dev`；0.6.0 附件保持原样，仍只支持旧 build 25386012。
 
-完整构建同时生成独立版与 ASI 插件版，两者默认提供全传送；保留剧情限制的构建仅用于开发对照。本地构建和打包不会自动发布版本，也不会安装 DLL 或修改游戏存档。本次验证范围见 [1.4.0 兼容性记录](GAME_1_4_0_COMPATIBILITY.md)。
+完整构建同时生成独立版与 ASI 插件版，两者默认提供全传送；保留剧情限制的构建仅用于开发对照。本地构建和打包不会自动发布版本，也不会安装 DLL 或修改游戏存档。本次验证范围见 [Ver.1.04 兼容性记录](GAME_1_4_0_COMPATIBILITY.md)。
 
 ## 环境
 
@@ -13,7 +13,7 @@
 
 ## 完整构建
 
-当前目标是游戏文件版本 **1.4.0.0 / Steam build 25721473**，`sora_2nd.exe` SHA-256 为 `cab62e5872222efb2aaf272be47f14263db4e7132ad7df5255db8efbee9959ea`。`native/game_version.h` 是运行时、目录生成器、构建、打包和安装器共用的版本权威来源；不能通过只修改生成目录中的哈希来放行其他游戏构建。
+当前目标是游戏 **Ver.1.04**，Windows 版本资源中的 EXE 文件版本为 **1.4.0.0**，Steam build 为 **25721473**，`sora_2nd.exe` SHA-256 为 `cab62e5872222efb2aaf272be47f14263db4e7132ad7df5255db8efbee9959ea`。`native/game_version.h` 是运行时、目录生成器、构建、打包和安装器共用的技术版本权威来源；不能通过只修改生成目录中的哈希来放行其他游戏构建。标题版本与 EXE 文件版本的来源说明见 [兼容性记录](GAME_1_4_0_COMPATIBILITY.md)。
 
 ```powershell
 git clone https://github.com/blockshy/sky2-chest-tracker.git
@@ -110,28 +110,28 @@ Windows x64 + MSVC 下另运行记录文件 I/O、双策略会话和生产 MASM 
 .\tests\asi\Invoke-LoaderIntegration.ps1 -LoaderPath '.\.deps\ultimate-asi-loader-9.7.4\xinput1_4.dll' -BinaryDirectory '.\build-release\tests\asi' -ChestPluginPath '.\build-release\Sky2ChestTracker.asi' -StandaloneDllPath '.\build-release\xinput1_4.dll'
 ```
 
-旧游戏构建上的精简安装版曾通过 26 组 CTest 与 10 个真实 UAL 隔离场景，覆盖加载顺序、入口、重复保护、XInput 转发和未知宿主拒绝；此前 Steam 实机记录见 [插件共存验证](PLUGIN_TESTING.md#本轮验证记录)。这些历史结果不能替代 1.4.0 的运行时、输入和语言切换回归；本次完成情况以 [兼容性记录](GAME_1_4_0_COMPATIBILITY.md) 为准。探针没有第二套界面或输入挂钩，不能据此宣称任意两个 Mod 均兼容。
+本次 Ver.1.04 适配通过 29 组 CTest、88 项公开 Python 测试及 10 个真实 UAL 隔离场景，并获得用户实机功能正常确认；证据与未覆盖范围见 [兼容性记录](GAME_1_4_0_COMPATIBILITY.md)。历史流程与旧版结果见 [插件共存验证](PLUGIN_TESTING.md#本轮验证记录)。探针没有第二套界面或输入挂钩，不能据此宣称任意两个 Mod 均兼容。
 
 ## 打包
 
-公开发布前应完成完整构建、自动测试和适用范围的实机验证。当前项目版本仍为 0.6.0，本次仅生成开发测试包，不上传或替换现有 Release 附件。下面使用独立输出目录，避免同名产物与旧发行包混淆；三种分发分别打包，公共 Loader 不能作为独立版 Mod DLL。
+公开发布前应完成完整构建、自动测试和适用范围的实机验证。当前项目版本为 **0.6.1**，以下命令将三种分发分别打包至 `release/v0.6.1/`；0.6.0 的既有附件保留，公共 Loader 仍以独立的 9.7.4 包分发，不能作为独立版 Mod DLL。
 
 ```powershell
 # 独立版：根目录代理；Distribution 的默认值也是 Standalone。
-.\tools\Package-Mod.ps1 -Distribution Standalone -DllPath '.\build-release\xinput1_4.dll' -OutputDirectory '.\release\game-1.4.0-dev'
+.\tools\Package-Mod.ps1 -Distribution Standalone -DllPath '.\build-release\xinput1_4.dll' -OutputDirectory '.\release\v0.6.1'
 # 插件版：只携带宝箱 ASI，不包含公共 Loader。
-.\tools\Package-Mod.ps1 -Distribution Plugin -DllPath '.\build-release\Sky2ChestTracker.asi' -OutputDirectory '.\release\game-1.4.0-dev'
+.\tools\Package-Mod.ps1 -Distribution Plugin -DllPath '.\build-release\Sky2ChestTracker.asi' -OutputDirectory '.\release\v0.6.1'
 # 公共加载器：独立包、独立文件归属，使用前一步核验过的官方文件。
-.\tools\Package-Mod.ps1 -Distribution Loader -DllPath '.\.deps\ultimate-asi-loader-9.7.4\xinput1_4.dll' -OutputDirectory '.\release\game-1.4.0-dev'
+.\tools\Package-Mod.ps1 -Distribution Loader -DllPath '.\.deps\ultimate-asi-loader-9.7.4\xinput1_4.dll' -OutputDirectory '.\release\v0.6.1'
 ```
 
-分别输出 `Sky2ChestTracker-0.6.0-Standalone.zip`、`Sky2ChestTracker-0.6.0-ASI.zip`、`Sky2ModLoader-UAL-9.7.4.zip`，上述命令写入 `release/game-1.4.0-dev/`，各有同名 `.sha256` 文件。脚本按白名单打包二进制、安装脚本、玩家 README、四份指南（`INSTALLATION.md`、`USAGE.md`、`TRAVEL.md`、`ASI_LOADER.md`）、包内校验清单和许可证；诊断探针、`PLUGIN_TESTING.md` 与开发资料不进入玩家包。
+分别输出 `Sky2ChestTracker-0.6.1-Standalone.zip`、`Sky2ChestTracker-0.6.1-ASI.zip`、`Sky2ModLoader-UAL-9.7.4.zip`，上述命令写入 `release/v0.6.1/`，各有同名 `.sha256` 文件。脚本按白名单打包二进制、安装脚本、玩家 README、四份指南（`INSTALLATION.md`、`USAGE.md`、`TRAVEL.md`、`ASI_LOADER.md`）、包内校验清单和许可证；诊断探针、`PLUGIN_TESTING.md` 与开发资料不进入玩家包。
 四份指南位于包内 `docs/`，与 README 互相链接，解压后可离线阅读；它们不在 `dist/` 内，不会复制到游戏目录。
 暂存目录保留在被忽略的 `release/` 中，不要压缩整个工作目录。
 玩家自己的 `revisit-return-25721473.dat`、`revisit-history-25721473/`、旧版固定名称的返程记录、存档、日志和私有研究资料不进入安装包。
 安装更新和卸载均保留用户返程记录，不应在打包或清理脚本中递归清空 Mod 目录。
 
-当前 runtime journal 使用权威版本头中的 EXE 指纹，并以 Steam build 区分活动记录及历史目录。1.4.0 不自动读取旧 `revisit-return.dat`／`revisit-history/`；旧内容原样保留，避免跨 EXE 执行，也避免旧记录因不兼容而阻止新版创建新行程。
+当前 runtime journal 使用权威版本头中的 EXE 指纹，并以 Steam build 区分活动记录及历史目录。适配 Ver.1.04 的 Mod 不自动读取旧 `revisit-return.dat`／`revisit-history/`；旧内容原样保留，避免跨 EXE 执行，也避免旧记录因不兼容而阻止新版创建新行程。
 
 安装需要解压整个 ZIP。宝箱包根目录 `Install-Mod.ps1` 根据包内类型安装独立版或 ASI；公共 Loader 使用 `installer/Install-Loader.ps1`。手动复制 `dist/` 的全部内容即可；安装脚本、文档及校验清单不在 `dist/` 中，不生成游戏目录收据。手动路径与数据迁移见 [ASI 指南](ASI_LOADER.md)。
 
@@ -141,7 +141,7 @@ Windows x64 + MSVC 下另运行记录文件 I/O、双策略会话和生产 MASM 
 
 打包器检查 Mod 二进制是否内嵌当前支持的 EXE 指纹，拒绝将旧 DLL／ASI 标成新游戏兼容包；官方 Loader 仍以其上游 DLL 哈希核验。`installer/game_version.h` 是权威头的原样副本，`installer/Get-GameVersion.ps1` 供离线安装器读取；版本配置和脚本不进入游戏载荷。PowerShell 脚本保留 UTF-8 BOM，以兼容 Windows PowerShell 5.1。
 
-开发包与已发布 0.6.0 可能同名，必须通过 `exe_sha256`、载荷哈希及构建来源区分，不能把本地打包成功写成已经发布。语言文本和原生名称已编入二进制，不新增玩家安装文件；包内不携带诊断探针或运行时数据。
+发布前核对 `exe_sha256`、载荷哈希与 ZIP 校验文件；本地打包不会自动上传 GitHub。语言文本和原生名称已编入二进制，不新增玩家安装文件；包内不携带诊断探针或运行时数据。
 
 ## 构建一致性
 

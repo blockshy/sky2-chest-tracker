@@ -247,8 +247,8 @@ static DWORD WINAPI Initialize(void* context) noexcept {
         DWORD unused = 0;
         VirtualProtect(slot, sizeof(void*), protection, &unused);
         Log(revisit_policy::kUnrestricted ?
-            "Sky2ChestTracker 0.6.0 active: chest tracking, exploration and full travel." :
-            "Sky2ChestTracker 0.6.0 active: chest tracking, exploration and story-restricted travel.");
+            "Sky2ChestTracker 0.6.1 active: chest tracking, exploration and full travel." :
+            "Sky2ChestTracker 0.6.1 active: chest tracking, exploration and story-restricted travel.");
     } catch (...) { Log("Initialization failed; exception contained."); }
     return 0;
 }

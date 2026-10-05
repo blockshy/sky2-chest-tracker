@@ -2,7 +2,7 @@
 
 [项目首页](../README.md) · [独立版安装](INSTALLATION.md) · [操作说明](USAGE.md) · [全传送与精确返程](TRAVEL.md)
 
-本文对应以 **0.6.0 为基础的游戏 1.4.0 兼容性开发版**，尚未发布新的 Release。[0.6.0 Release](https://github.com/blockshy/sky2-chest-tracker/releases/tag/v0.6.0) 现有附件仍只支持旧游戏；当前测试包需从 `main` 构建，兼容版本见 [安装指南](INSTALLATION.md#兼容版本)。ASI 版由公共 Loader 加载，安装后根目录只增加 `xinput1_4.dll` 与 `plugins/` 两项。
+本文对应 **0.6.1**，下载见 [0.6.1 Release](https://github.com/blockshy/sky2-chest-tracker/releases/tag/v0.6.1)，适配游戏 Ver.1.04（EXE 文件版本 1.4.0.0）；完整兼容版本见 [安装指南](INSTALLATION.md#兼容版本)。ASI 版由公共 Loader 加载，安装后根目录只增加 `xinput1_4.dll` 与 `plugins/` 两项。0.6.0 附件保留供旧游戏使用。
 
 ## 目录
 
@@ -19,8 +19,8 @@
 
 | 安装包 | 用途 | 需要搭配 |
 | --- | --- | --- |
-| `Sky2ChestTracker-0.6.0-Standalone.zip` | 独立版宝箱入口 | 无需 Loader，见 [独立版安装](INSTALLATION.md) |
-| `Sky2ChestTracker-0.6.0-ASI.zip` | 宝箱 ASI 插件 | 公共 Loader |
+| `Sky2ChestTracker-0.6.1-Standalone.zip` | 独立版宝箱入口 | 无需 Loader，见 [独立版安装](INSTALLATION.md) |
+| `Sky2ChestTracker-0.6.1-ASI.zip` | 宝箱 ASI 插件 | 公共 Loader |
 | `Sky2ModLoader-UAL-9.7.4.zip` | 公共 Loader，本包没有宝箱功能 | ASI 插件 |
 
 **宝箱独立版与 ASI 版二选一，功能和快捷键一致。**通常安装“ASI 包＋Loader 包”，不要同时放置两个宝箱入口，不要把独立版 DLL 改名成 ASI，也不要放置多个宝箱 ASI 副本。
@@ -61,7 +61,7 @@ Get-FileHash -LiteralPath '你的游戏安装目录\xinput1_4.dll' -Algorithm SH
 | 来源不明的同名 DLL | 停止，先核对其他 Mod 的安装方式 |
 | 旧 0.6.0 ASI 数据在 `Sky2Mods/Sky2ChestTracker/` | 按下文迁移现有 ASI 数据后继续使用 |
 
-**当前开发包与旧 Release 可能同名，重新下载旧附件不会获得 1.4.0 修复。**请核对构建来源、`installer/manifest.json` 中的 `exe_sha256` 与载荷哈希；`dist/` 只有实际安装文件，版本定义和清单留在解压包中。
+游戏 Ver.1.04 请使用 **0.6.1** 包及配套 `.sha256`，不要继续安装旧 0.6.0。安装器检查 `installer/manifest.json` 中的 `exe_sha256` 与载荷哈希；`dist/` 只有实际安装文件，版本定义和清单留在解压包中。
 
 旧 ASI 目录迁移规则：
 
@@ -70,7 +70,7 @@ Get-FileHash -LiteralPath '你的游戏安装目录\xinput1_4.dll' -Algorithm SH
 - 手动更新时，在启动新版之前自行移动上述 ASI 数据，保持历史文件名和相对目录。新目录已有不同内容时先核对，不选择覆盖。
 - 旧收据、拆分许可和文档仅按已知内容清理；未知或修改过的文件保留，空目录才删除。运行时不会自行扫描或合并旧目录。
 
-上述旧文件迁移保持原始内容和 EXE 指纹。1.4.0 开发版改用 `revisit-return-25721473.dat` 和 `revisit-history-25721473/`，不自动读取或跨版本执行旧固定路径中的记录；迁移不表示旧历史已适配新游戏。
+上述旧文件迁移保持原始内容和 EXE 指纹。0.6.1 改用 `revisit-return-25721473.dat` 和 `revisit-history-25721473/`，不自动读取或跨版本执行旧固定路径中的记录；迁移不表示旧历史已适配新游戏。
 
 ## 脚本安装更新与卸载
 
@@ -144,8 +144,8 @@ Loader 单独维护，只接受已核验的官方二进制，不用随宝箱每�
       ├─ UltimateASILoader.LICENSE.txt
       │                             Loader 完整许可
       ├─ tracker.log                 运行日志
-      ├─ revisit-return-25721473.dat  1.4.0 当前返程记录
-      └─ revisit-history-25721473/    1.4.0 返程历史
+      ├─ revisit-return-25721473.dat  Ver.1.04 当前返程记录
+      └─ revisit-history-25721473/    Ver.1.04 返程历史
          └─ <记录编号>.dat
 ```
 
@@ -168,12 +168,12 @@ Loader 单独维护，只接受已核验的官方二进制，不用随宝箱每�
 | --- | --- |
 | 只有 Loader，没有面板 | 是否安装 `.asi`，再按 F7／View + B 检查显隐 |
 | 脚本提示未知哈希 | 核对文件来源，并使用对应新版安装包；不要篡改校验清单 |
-| 更新后看不到返程历史 | 1.4.0 按游戏 build 单独保存；旧游戏记录保留但不自动导入，独立版历史也不导入 |
+| 更新后看不到返程历史 | Ver.1.04 按游戏 build 单独保存；旧游戏记录保留但不自动导入，独立版历史也不导入 |
 | 数据迁移提示冲突 | 保留两边数据，核对各自地点和时间，不覆盖 |
 | 重复加载提示 | 检查 `plugins`、`scripts`、`update` 等目录，只保留一个宝箱入口 |
 | Loader 无法卸载 | 仍有 ASI、链接目录或无法确认内容，先核对依赖 |
 | 加入其他插件后异常 | 分别单独运行定位，反馈版本及相关日志 |
 
-旧游戏构建曾在本机 Steam Input 与 Xbox ABXY 环境验证宝箱与只读诊断探针共存、输入热切换和重连、一次传送返程；这些结果不能替代 1.4.0 回归，也不代表任意两个界面或输入 Mod 兼容。探针不进入玩家包；历史范围见 [插件共存验证](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/PLUGIN_TESTING.md)，本次完成情况见 [1.4.0 兼容性记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/GAME_1_4_0_COMPATIBILITY.md)。
+本次通过 10 个 UAL 隔离加载场景，并获得用户在游戏 Ver.1.04 中功能正常的实机确认；不代表任意两个界面或输入 Mod 兼容。探针不进入玩家包，具体证据与边界见 [Ver.1.04 兼容性记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/GAME_1_4_0_COMPATIBILITY.md)，历史流程见 [插件共存验证](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/PLUGIN_TESTING.md)。
 
 反馈时附分发、版本、游戏构建、步骤及 `plugins/Sky2ChestTracker/tracker.log` 的相关片段，无需公开整份存档或返程文件。
