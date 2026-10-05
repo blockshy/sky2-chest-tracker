@@ -2,7 +2,7 @@
 import json
 import os
 import unittest
-from installer_fixture_support import InstallerFixture, PWSH, PS51, PAYLOADS, OLD, FOREIGN, LAYOUT, digest, valid_record
+from installer_fixture_support import InstallerFixture, PWSH, PS51, PAYLOADS, OLD, FOREIGN, LAYOUT, digest, valid_record, PREVIOUS_EXE_HASH
 
 
 @unittest.skipUnless(os.name == 'nt' and PWSH, '需要 Windows PowerShell 环境')
@@ -70,6 +70,24 @@ class AsiSafety(InstallerFixture):
         self.assertEqual((self.game / 'plugins/Sky2ChestTracker/revisit-history/0000000000001234.dat').read_bytes(), valid_record())
         self.assertEqual((self.game / 'Sky2ChestTracker/revisit-return.dat').read_bytes(), b'standalone sentinel')
         self.assertEqual(len(list((self.packages['asi-plugin'] / 'backups').glob('*.asi'))), 1)
+
+    def test_previous_game_records_migrate_without_rewriting_their_fingerprint(self):
+        """已确认的旧版记录可以保留迁移，但绝不改写为当前游戏哈希冒充兼容记录。"""
+        self.add_legacy_data()
+        previous = valid_record(exe_hash=PREVIOUS_EXE_HASH)
+        self.write('Sky2Mods/Sky2ChestTracker/revisit-return.dat', previous)
+        self.write('Sky2Mods/Sky2ChestTracker/revisit-history/0000000000001234.dat', previous)
+        self.receipt('asi-plugin', exe_sha256=PREVIOUS_EXE_HASH)
+        self.invoke('asi-plugin')
+        self.assertFalse((self.game / 'Sky2Mods').exists())
+        self.assertEqual((self.game / 'plugins/Sky2ChestTracker/revisit-return.dat').read_bytes(), previous)
+        self.assertEqual((self.game / 'plugins/Sky2ChestTracker/revisit-history/0000000000001234.dat').read_bytes(), previous)
+
+    def test_unrecognized_game_record_is_not_migrated_even_with_valid_crc(self):
+        """容器 CRC 正确也不能证明未知 EXE 记录属于历史兼容范围。"""
+        self.add_legacy_data()
+        self.write('Sky2Mods/Sky2ChestTracker/revisit-return.dat', valid_record(exe_hash='11' * 32))
+        self.refused('asi-plugin', message='旧返程数据')
 
     def test_identical_destination_data_deduplicated(self):
         self.add_legacy_data()

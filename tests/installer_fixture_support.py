@@ -6,14 +6,19 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'tools'))
+from game_version import read_game_version
+
 PWSH = shutil.which('pwsh')
 PS51 = Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
-EXE_HASH = 'd8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf'
+EXE_HASH = read_game_version()['exe_sha256']
+PREVIOUS_EXE_HASH = read_game_version()['previous_exe_sha256']
 LOADER_HASH = '031a3e5576d91dce1e438d36b9a3d462c7334ab4791990a8ff1e3ddc0e132daf'
 PAYLOADS = {'standalone-proxy': b'synthetic chest proxy', 'asi-plugin': b'synthetic chest ASI', 'asi-loader': b'synthetic verified UAL'}
 OLD = {'standalone-proxy': b'synthetic previous proxy', 'asi-plugin': b'synthetic previous ASI'}
@@ -30,12 +35,12 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def valid_record(ticket=0x1234):
+def valid_record(ticket=0x1234, exe_hash=EXE_HASH):
     """生成真实稳定容器格式，包括游戏指纹与 CRC，测试迁移不会接管未知 .dat。"""
     data = bytearray(144)
     data[:8] = b'SKY2RET1'
     struct.pack_into('<II', data, 8, 1, 144)
-    data[16:48] = bytes.fromhex(EXE_HASH)
+    data[16:48] = bytes.fromhex(exe_hash)
     struct.pack_into('<QQ', data, 48, 1770000000, ticket)
     data[64:70] = b't0000\x00'
     struct.pack_into('<I', data, 140, zlib.crc32(data[:140]))
@@ -75,6 +80,9 @@ class InstallerFixture(unittest.TestCase):
     def make_package(self, kind):
         package = self.root / ('package-' + kind)
         shutil.copytree(ROOT / 'installer', package / 'installer')
+        # 与真实打包器保持同样的离线版本配置来源；不在测试中维护另一份当前哈希。
+        shutil.copyfile(ROOT / 'native/game_version.h', package / 'installer/game_version.h')
+        shutil.copyfile(ROOT / 'tools/Get-GameVersion.ps1', package / 'installer/Get-GameVersion.ps1')
         for name in ('Install-Mod.ps1', 'Uninstall-Mod.ps1'):
             shutil.copyfile(ROOT / name, package / name)
         common = package / 'installer/Common.ps1'

@@ -2,7 +2,9 @@
 
 **《空之轨迹 the 2nd》宝箱与探索辅助 Mod**。在游戏地图中追踪遗漏宝箱，分别查看本周目与继承记录的收集进度，并通过全传送清单前往其他地点、返回原来的位置。
 
-当前版本为 **0.6.0**，提供功能相同的独立版与 ASI 插件版。安装包与 SHA-256 校验文件见 [0.6.0 Release](https://github.com/blockshy/sky2-chest-tracker/releases/tag/v0.6.0)，请按下方说明选择所需分发。
+当前 `main` 是以 **0.6.0 为基础、面向游戏 1.4.0.0（Steam build 25721473）的兼容性开发版**，尚未发布新的 GitHub Release。更新前 `main` 的未发布开发提交保留在 `dev` 分支。
+
+[0.6.0 Release](https://github.com/blockshy/sky2-chest-tracker/releases/tag/v0.6.0) 的现有附件仍仅支持旧游戏 build **25386012**，不能用于游戏 1.4.0。新游戏的测试构建需要从当前 `main` 按 [构建指南](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/BUILDING.md) 生成；具体完成与待完成的验证见 [1.4.0 兼容性记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/GAME_1_4_0_COMPATIBILITY.md)。
 
 ## 目录
 
@@ -38,6 +40,8 @@ English: The interface follows all eight game text languages: Simplified Chinese
 
 ## 选择版本与 Loader
 
+以下为两种分发方式及沿用的文件命名。当前开发构建仍使用 0.6.0 项目版本号，文件名或面板版本不能证明它已适配 1.4.0；应核对构建来源与包内 `exe_sha256`。
+
 | 选择 | 安装包 | 适用情况 |
 | --- | --- | --- |
 | 独立版 | `Sky2ChestTracker-0.6.0-Standalone.zip` | 只用本 Mod，沿用根目录 `xinput1_4.dll` 的安装方式 |
@@ -51,7 +55,7 @@ ASI 版使用 **ThirteenAG 的 [Ultimate ASI Loader](https://github.com/Thirteen
 
 ## 快速开始
 
-需要 Steam Windows 版游戏，安装预编译 Mod 无需 Python、Visual Studio 等开发工具。保存所需进度并正常退出游戏，找到包含 `sora_2nd.exe` 的游戏根目录。
+需要 Steam Windows 版游戏及与其 EXE 指纹匹配的安装包。现有 Release 包只适用于旧游戏；1.4.0 开发包需先按构建指南生成。使用已经构建的安装包无需 Python、Visual Studio 等开发工具。保存所需进度并正常退出游戏，找到包含 `sora_2nd.exe` 的游戏根目录。
 
 1. 完整解压所选安装包。GitHub 的 **Source code** 压缩包只有源码，不能直接安装。
 2. **独立版：**在独立版包根目录运行下方命令；或按 [手动安装](docs/INSTALLATION.md#手动安装) 将 `dist/` 内全部内容复制到游戏根目录。
@@ -89,7 +93,7 @@ ASI 版使用 **ThirteenAG 的 [Ultimate ASI Loader](https://github.com/Thirteen
 
 所有操作均应先退出游戏，并使用对应分发的安装包。保留各自数据目录中的日志与返程记录，不要删除整个目录。旧 ASI 的 `Sky2Mods/Sky2ChestTracker/` 数据按 [迁移说明](docs/ASI_LOADER.md#安装前与旧版迁移) 移至新路径。
 
-0.6.0 已加入八语支持并按精简结构重新打包，版本号不变；请重新下载当前附件和配套 `.sha256`，通过文件哈希区分旧包。
+重新下载现有 0.6.0 附件不会获得 1.4.0 兼容性修复。当前开发构建与旧 Release 可能同名，应通过包内 `installer/manifest.json` 的 `exe_sha256` 和二进制哈希区分，不能仅凭版本号判断。
 
 | 对象 | 更新 | 卸载 |
 | --- | --- | --- |
@@ -101,19 +105,21 @@ ASI 版使用 **ThirteenAG 的 [Ultimate ASI Loader](https://github.com/Thirteen
 
 ## 兼容性与使用范围
 
-| 项目 | 当前支持 |
+| 项目 | 当前 `main` 的适配目标 |
 | --- | --- |
 | 游戏平台 | Steam、Windows x64 |
-| 游戏构建 | Steam build **25386012**；[EXE 校验值](docs/INSTALLATION.md#兼容版本) |
+| 游戏构建 | **1.4.0.0 / Steam build 25721473**；[EXE 校验值](docs/INSTALLATION.md#兼容版本) |
 | 渲染 | 原生 Direct3D 11 |
 | 界面语言 | 简体中文、繁体中文、日文、英文、德文、法文、西班牙文、韩文，自动跟随游戏文字语言 |
-| 手柄 | Xbox ABXY，已验证的 Steam Input 环境 |
+| 手柄 | Xbox ABXY；新版游戏中的 Steam Input 行为按本次测试记录确认 |
 
-游戏版本不匹配时不会启用挂钩。已验证宝箱 ASI 与只读诊断插件同时加载；公共 Loader 不负责协调不同 Mod 的界面、输入或同一函数挂钩。其他手柄、DXVK 和第三方 Mod 组合尚未全面验证。
+版本信息统一由 `native/game_version.h` 定义，生成目录、构建、打包、安装器与运行时共用；未知游戏版本会被拒绝。旧版已有的宝箱 ASI 与只读诊断插件共存结果不能替代 1.4.0 回归；本次证据与剩余边界见 [兼容性记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/GAME_1_4_0_COMPATIBILITY.md)。公共 Loader 不负责协调不同 Mod 的界面、输入或同一函数挂钩。
 
 全传送只在自由行动、游戏区域地图稳定浏览时使用。它允许越过剧情门槛，但原生剧情与自动保存仍会执行，前往不同进度的地点前请保留独立存档。
 
-返程记录**不绑定存档栏位**。切档前先返程，或正常退出重启后再读档；核对记录的地点与时间后再返回。请保留 `revisit-return.dat` 和 `revisit-history/`。详细范围见 [传送指南](docs/TRAVEL.md#使用边界)。
+返程记录**不绑定存档栏位**。切档前先返程，或正常退出重启后再读档；核对记录的地点与时间后再返回。1.4.0 开发版使用 `revisit-return-25721473.dat` 和 `revisit-history-25721473/`，请保留这些文件。详细范围见 [传送指南](docs/TRAVEL.md#使用边界)。
+
+游戏升级前的 `revisit-return.dat` 和 `revisit-history/` 会保留，安装器迁移时也保持原始字节和 EXE 指纹。新版按游戏构建单独保存，不自动读取或跨 EXE 执行旧记录；不要重命名旧文件或手改记录哈希绕过校验。
 
 ## 文档导航
 

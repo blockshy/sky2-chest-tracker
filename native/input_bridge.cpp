@@ -88,11 +88,13 @@ void AttachInputWindow(HWND window) noexcept {
 }
 
 bool InstallInputBridge(uintptr_t base) noexcept {
-    // 当前 EXE 唯一的 XInputGetState 调用位于 0x6A55A8；槽位可能已经由 Steam 重定向。
+    // 1.4.0 的完整输入函数与旧版指令、寄存器和字段一致；经导入表独立核验，
+    // 此 RIP 相对调用仍指向 XINPUT1_4.dll 的序号 2（XInputGetState）。代码位置
+    // 与 IAT 分别移动，不能套用同一个地址增量；槽目标可能已由 Steam 重定向。
     // 校验调用指令后保存原槽目标，用原子比较交换安装，避免覆盖安装期间的新挂钩。
-    const unsigned char expected[] = {0xFF, 0x15, 0x3A, 0x61, 0x21, 0x00};
-    if (std::memcmp(reinterpret_cast<void*>(base + 0x6A55A8), expected, sizeof(expected))) return false;
-    auto slot = reinterpret_cast<void**>(base + 0x8BB6E8);
+    const unsigned char expected[] = {0xFF, 0x15, 0x32, 0x53, 0x21, 0x00};
+    if (std::memcmp(reinterpret_cast<void*>(base + 0x6A63B8), expected, sizeof(expected))) return false;
+    auto slot = reinterpret_cast<void**>(base + 0x8BB6F0);
     void* previous = *slot;
     if (!previous) return false;
     DWORD protection = 0;

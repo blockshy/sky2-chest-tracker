@@ -10,10 +10,13 @@ import hashlib
 import json
 import struct
 from formats import Fpac, Bjson, plain
+from game_version import assert_supported_game
 
 
 def extract(game: Path, output: Path):
     """读取指定版本，输出 JSON、C++ 头文件和关联验证结果。"""
+    # 必须在读取任何 PAC 或创建输出目录前核验，不能将未知 EXE 指纹写成支持版本。
+    exe_sha256 = assert_supported_game(game)
     pac_root = game / "pac" / "steam"
     table = Fpac(pac_root / "table_en.pac").read("table_en/t_tbox.tbl")
     if table[:4] != b"#TBL" or struct.unpack_from("<I", table, 4)[0] != 1:
@@ -82,7 +85,7 @@ def extract(game: Path, output: Path):
     if missing:
         raise ValueError(f"存在未找到场景坐标的宝箱：{missing}")
     output.mkdir(parents=True, exist_ok=True)
-    result = {"schema_version": 1, "exe_sha256": hashlib.sha256((game / "sora_2nd.exe").read_bytes()).hexdigest(),
+    result = {"schema_version": 1, "exe_sha256": exe_sha256,
               "tbox_sha256": hashlib.sha256(table).hexdigest(), "count": len(records),
               "excluded_development_rows": excluded, "scene_errors": scene_errors, "chests": records}
     (output / "chests.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

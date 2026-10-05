@@ -1,14 +1,33 @@
 // 返程文件的稳定编码；不依赖 Windows 或游戏资源，公开测试可直接验证损坏边界。
 #include "revisit_journal.h"
+#include "game_version.h"
 #include <cstring>
 
 namespace tracker {
 namespace {
 constexpr uint8_t kMagic[8] = {'S','K','Y','2','R','E','T','1'};
-constexpr uint8_t kGameHash[32] = {
-    0xd8,0xb2,0x91,0x1d,0x15,0x76,0x21,0x6b,0xdc,0x22,0xd0,0x70,0x55,0x0e,0x4f,0x53,
-    0x1e,0x10,0x5d,0xe7,0xed,0x29,0x81,0x88,0x58,0x49,0x66,0x9f,0x4a,0xcf,0x8a,0xaf
-};
+// 持久化记录必须与实际运行的原生适配版本绑定，不能另维护一份旧版字节数组。
+// 编译期严格解析统一的 SHA-256：配置长度或字符格式错误直接使构建失败，
+// 不允许把非法十六进制字符静默转成 0，也不把历史迁移白名单用于执行返程。
+constexpr uint8_t HashDigit(char value) noexcept {
+    return value >= '0' && value <= '9' ? static_cast<uint8_t>(value - '0') :
+        value >= 'a' && value <= 'f' ? static_cast<uint8_t>(value - 'a' + 10) : uint8_t{0xFF};
+}
+constexpr bool ValidGameHash() noexcept {
+    if (sizeof(sky2::game_version::kSupportedExeSha256) != 65) return false;
+    for (size_t i = 0; i < 64; ++i)
+        if (HashDigit(sky2::game_version::kSupportedExeSha256[i]) == 0xFF) return false;
+    return sky2::game_version::kSupportedExeSha256[64] == '\0';
+}
+static_assert(ValidGameHash(), "Return journal requires the audited SHA-256 in lowercase hexadecimal.");
+constexpr std::array<uint8_t, 32> GameHashBytes() noexcept {
+    std::array<uint8_t, 32> hash{};
+    for (size_t i = 0; i < hash.size(); ++i)
+        hash[i] = static_cast<uint8_t>((HashDigit(sky2::game_version::kSupportedExeSha256[i * 2]) << 4) |
+            HashDigit(sky2::game_version::kSupportedExeSha256[i * 2 + 1]));
+    return hash;
+}
+constexpr auto kGameHash = GameHashBytes();
 void Put32(uint8_t* bytes, uint32_t value) noexcept {
     for (unsigned i=0; i<4; ++i) bytes[i]=static_cast<uint8_t>(value>>(i*8));
 }
@@ -35,7 +54,7 @@ bool EncodeRevisitRecord(const RevisitReturnRecord& record, RevisitRecordBytes& 
         record.createdUnixSeconds<1577836800ull || record.createdUnixSeconds>4102444800ull) return false;
     bytes.fill(0);
     std::memcpy(bytes.data(),kMagic,8); Put32(bytes.data()+8,1); Put32(bytes.data()+12,kRevisitRecordBytes);
-    std::memcpy(bytes.data()+16,kGameHash,32);
+    std::memcpy(bytes.data()+16,kGameHash.data(),kGameHash.size());
     Put64(bytes.data()+48,record.createdUnixSeconds); Put64(bytes.data()+56,record.ticket);
     std::memcpy(bytes.data()+64,record.point.scene,std::strlen(record.point.scene));
     Put32(bytes.data()+96,record.point.region); Put32(bytes.data()+100,record.point.chapter);
@@ -47,7 +66,7 @@ bool EncodeRevisitRecord(const RevisitReturnRecord& record, RevisitRecordBytes& 
 }
 bool DecodeRevisitRecord(const uint8_t* bytes, size_t size, RevisitReturnRecord& record) noexcept {
     if (!bytes || size!=kRevisitRecordBytes || std::memcmp(bytes,kMagic,8) || Get32(bytes+8)!=1 ||
-        Get32(bytes+12)!=kRevisitRecordBytes || std::memcmp(bytes+16,kGameHash,32) ||
+        Get32(bytes+12)!=kRevisitRecordBytes || std::memcmp(bytes+16,kGameHash.data(),kGameHash.size()) ||
         Get32(bytes+140)!=Checksum(bytes,140)) return false;
     RevisitReturnRecord decoded{};
     decoded.createdUnixSeconds=Get64(bytes+48); decoded.ticket=Get64(bytes+56);

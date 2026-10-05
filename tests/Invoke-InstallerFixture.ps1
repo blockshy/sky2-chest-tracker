@@ -14,13 +14,14 @@ $ErrorActionPreference='Stop'
 $global:Sky2FixtureExe=Join-Path $GamePath 'sora_2nd.exe'
 $global:Sky2FixtureRunning=[bool]$Running
 $global:Sky2FixtureRealExeHash=[bool]$UseRealExeHash
+$global:Sky2FixtureExeHash=(& (Join-Path (Split-Path $PSScriptRoot -Parent) 'tools/Get-GameVersion.ps1')).ExeSha256
 if ((Get-Content -Raw -LiteralPath $global:Sky2FixtureExe) -cne 'SKY2 INSTALLER TEST FIXTURE') { throw '测试入口只接受合成 EXE 占位文件。' }
 Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
 function Get-FileHash {
     [CmdletBinding()]
     param([string]$LiteralPath, [string]$Algorithm='SHA256')
     if ($LiteralPath -eq $global:Sky2FixtureExe -and -not $global:Sky2FixtureRealExeHash) {
-        return [PSCustomObject]@{ Hash='d8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf' }
+        return [PSCustomObject]@{ Hash=$global:Sky2FixtureExeHash }
     }
     if ($Algorithm -ne 'SHA256') { throw '测试入口只允许 SHA256。' }
     $hasher=[Security.Cryptography.SHA256]::Create()

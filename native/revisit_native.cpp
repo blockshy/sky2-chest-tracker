@@ -153,7 +153,7 @@ bool ReadPlaceIdentity(uintptr_t address, PlaceIdentity& result) noexcept {
 bool ReadPlaceRows(uintptr_t& rows,uint32_t& count) noexcept {
     uintptr_t owner=0,holder=0,file=0,buffer=0,headers=0;
     uint32_t index=0,offset=0,stride=0;
-    if (!Read(base+0xC5D778,owner) || !Read(owner+0x60,holder) || !Read(holder+8,file) ||
+    if (!Read(base+0xC5DC88,owner) || !Read(owner+0x60,holder) || !Read(holder+8,file) ||
         !Read(file+0x10,buffer) || !Read(file+0x20,headers) || !Read(file+0x2C,index) || index>1024) return false;
     const uintptr_t header=headers+static_cast<uintptr_t>(index)*0x50;
     if (!Read(header+0x44,offset) || offset>0x1000000 || !Read(header+0x48,stride) || stride!=0xA8 ||
@@ -367,7 +367,7 @@ RevisitNativeContext Capture(uintptr_t expectedMinimap = 0) noexcept {
     uint8_t specialEvent = 0,rootValid=0;
     std::array<uint8_t, 4096> storyFlags{};
     PlaceIdentity rootIdentity{},currentIdentity{};
-    if (!base || !Read(base+0xC60E08,field) || !Read(field+0x1BC8,pending)) return fail(CaptureIssue::Field);
+    if (!base || !Read(base+0xC61318,field) || !Read(field+0x1BC8,pending)) return fail(CaptureIssue::Field);
     result.transitionActive=pending!=0;
     if (!ReadScene(field+0x170,result.scene) || !Read(field+0x648,scene) ||
         !Read(field+0x108,root) || !Read(root+0xE77,rootValid) || rootValid!=1 ||
@@ -380,7 +380,7 @@ RevisitNativeContext Capture(uintptr_t expectedMinimap = 0) noexcept {
         (!forest::MatchesPlace(rootIdentity.id,rootIdentity.region,rootIdentity.variant,rootIdentity.scene) ||
          !forest::MatchesPlace(currentIdentity.id,currentIdentity.region,currentIdentity.variant,currentIdentity.scene)))
         return fail(CaptureIssue::PlaceTable);
-    if (!Read(base+0xC60E58, savedata) || !Read(savedata+0x10B, specialEvent) ||
+    if (!Read(base+0xC61368, savedata) || !Read(savedata+0x10B, specialEvent) ||
         !Read(savedata+0x11100+12*4, chapter) ||
         (chapter >> 30) != 1 || !ReadBytes(savedata+0x100, storyFlags.data(), storyFlags.size())) return fail(CaptureIssue::Story);
     result.chapter = chapter & 0x3FFFFFFFu;
@@ -447,8 +447,8 @@ RevisitNativeContext Capture(uintptr_t expectedMinimap = 0) noexcept {
     }
     uintptr_t fieldAgain = 0, savedataAgain = 0, sceneAgain = 0;
     uint32_t chapterAgain = 0;
-    if (!Read(base+0xC60E08, fieldAgain) || fieldAgain != field ||
-        !Read(base+0xC60E58, savedataAgain) || savedataAgain != savedata ||
+    if (!Read(base+0xC61318, fieldAgain) || fieldAgain != field ||
+        !Read(base+0xC61368, savedataAgain) || savedataAgain != savedata ||
         !Read(field+0x648, sceneAgain) || sceneAgain != scene ||
         !Read(savedata+0x11100+12*4, chapterAgain) || chapterAgain != chapter) return fail(CaptureIssue::Changed);
     result.valid = result.region >= 1 && result.region <= 9 && result.chapter <= 9;
@@ -556,11 +556,11 @@ bool CapturePoint(const RevisitNativeContext& context, RevisitReturnPoint& outpu
     uint8_t rootValid=0,variant=0; uint32_t pending=1;
     RevisitReturnPoint point{}; float quaternion[4]{};
     pointIssue=2;
-    if (!Read(base+0xC60E08,field) || !Read(field+0x648,mapData) || !Read(field+0x108,root) ||
+    if (!Read(base+0xC61318,field) || !Read(field+0x648,mapData) || !Read(field+0x108,root) ||
         !Read(root+0xE77,rootValid) || rootValid!=1 || !Read(root+0x808,point.place) ||
         !Read(mapData,point.mapPlace) || !Read(mapData+0x90,variant)) return false;
     pointIssue=3;
-    if (!Read(field+0x660,player) || !Read(player,vtable) || vtable!=base+0xB05CB8 ||
+    if (!Read(field+0x660,player) || !Read(player,vtable) || vtable!=base+0xB05D18 ||
         !Read(player+0x60,actor) || !ReadBytes(actor+0xE8,point.xyz,sizeof(point.xyz)) ||
         !ReadBytes(actor+0x108,quaternion,sizeof(quaternion))) return false;
     pointIssue=4;if (!QuaternionYaw(quaternion,point.yawRadians)) return false;
@@ -571,7 +571,7 @@ bool CapturePoint(const RevisitNativeContext& context, RevisitReturnPoint& outpu
     uintptr_t fieldAgain=0,actorAgain=0,sceneAgain=0;
     char sceneName[32]{};
     pointIssue=5;
-    if (!Read(base+0xC60E08,fieldAgain) || fieldAgain!=field || !Read(field+0x648,sceneAgain) || sceneAgain!=mapData ||
+    if (!Read(base+0xC61318,fieldAgain) || fieldAgain!=field || !Read(field+0x648,sceneAgain) || sceneAgain!=mapData ||
         !Read(player+0x60,actorAgain) || actorAgain!=actor || !Read(field+0x1BC8,pending) || pending ||
         !ReadScene(field+0x170,sceneName) || std::strcmp(sceneName,point.scene)) return false;
     pointIssue=6;if (!ValidateReturnTable(point)) return false;
@@ -599,7 +599,7 @@ bool SamePoseValues(const float* a,float aYaw,const float* b,float bYaw,float to
 }
 LoadDescriptor ReadLoadDescriptor() noexcept {
     LoadDescriptor result{};uintptr_t field=0;
-    if (!Read(base+0xC60E08,field) || !ReadScene(field+0x194,result.scene) ||
+    if (!Read(base+0xC61318,field) || !ReadScene(field+0x194,result.scene) ||
         !ReadBytes(field+0x1BA8,result.xyz,sizeof(result.xyz)) || !Read(field+0x1BB8,result.yaw) ||
         !std::isfinite(result.yaw) || std::fabs(result.yaw)>6.284f) return result;
     for (float value:result.xyz) if (!std::isfinite(value) || std::fabs(value)>=100000) return result;
@@ -654,9 +654,9 @@ bool ValidateDestination(uint32_t target, RevisitReturnPoint* arrival = nullptr)
     uintptr_t owner=0, holder=0, file=0, buffer=0, headers=0, field=0, scene=0;
     uint32_t index=0, offset=0, stride=0, count=0;
     uint8_t variant=0;
-    if (!Read(base+0xC5D778, owner) || !Read(owner+0xF0, holder) || !Read(holder+8, file) ||
+    if (!Read(base+0xC5DC88, owner) || !Read(owner+0xF0, holder) || !Read(holder+8, file) ||
         !Read(file+0x10, buffer) || !Read(file+0x20, headers) || !Read(file+0x2C, index) || index>1024 ||
-        !Read(base+0xC60E08, field) || !Read(field+0x648, scene) || !Read(scene+0x90, variant)) return false;
+        !Read(base+0xC61318, field) || !Read(field+0x648, scene) || !Read(scene+0x90, variant)) return false;
     const uintptr_t header=headers+static_cast<uintptr_t>(index)*0x50;
     if (!Read(header+0x44, offset) || offset>0x1000000 || !Read(header+0x48, stride) || stride!=0x98 ||
         !Read(header+0x4C, count) || !count || count>1024) return false;
@@ -698,7 +698,7 @@ bool ValidateDestination(uint32_t target, RevisitReturnPoint* arrival = nullptr)
         // 普通跨地区入口126–135的row.region是菜单显示归属，落地却在另一地区。
         // 到达归属取真实地点表，并应用同一严格scene地区规则，不沿用显示分组号。
         uintptr_t savedata=0,rows=0;uint32_t chapter=0,placeCount=0,resolved=0;
-        if (!Read(base+0xC60E58,savedata) || !Read(savedata+0x11100+12*4,chapter) ||
+        if (!Read(base+0xC61368,savedata) || !Read(savedata+0x11100+12*4,chapter) ||
             (chapter>>30)!=1 || !ReadPlaceRows(rows,placeCount)) return false;
         for (uint32_t i=0;i<placeCount;++i) {
             uint32_t id=0;const auto row=rows+static_cast<uintptr_t>(i)*0xA8;
@@ -841,7 +841,7 @@ bool BeforeJump(uintptr_t field, uint32_t target, uintptr_t caller) noexcept {
         pending=status; expected=expectedContext; startedAt=requestedAt; armed=dispatchArmed;
         returnPoint=requestedReturn;
     }
-    const bool consumer=caller==base+0x299674 || caller==base+0x29968F;
+    const bool consumer=caller==base+0x299CB4 || caller==base+0x299CCF;
     if (!consumer || !armed || pending.target!=target) return false;
     const auto context=Capture();
     RevisitReturnPoint dispatchPosition{};
@@ -859,7 +859,7 @@ bool BeforeJump(uintptr_t field, uint32_t target, uintptr_t caller) noexcept {
     bool safe=pending.phase==RevisitNativePhase::ClosingMap && GetTickCount64()-startedAt<=5000 &&
         context.available && !context.busy &&
         SameContext(context,expected) && RevisitNativeTargetAvailable(target,context) && destinationValid &&
-        Read(base+0xC60E08,realField) && realField==field && Read(field+0x730,minimap) &&
+        Read(base+0xC61318,realField) && realField==field && Read(field+0x730,minimap) &&
         Read(minimap+0x28,menu) && !menu && Read(minimap+0x310,resultId) && resultId==target &&
         Read(minimap+0x314,resultKind) && resultKind==1 && permission && permission(target,context,pending.token);
     if (safe) {
@@ -1188,31 +1188,57 @@ bool BeforeRevisitNativeBrowse(uintptr_t menu) noexcept {
 
 void InstallRevisitNative(uintptr_t gameBase) noexcept {
     base=gameBase;
+    // Steam Build 25721473（EXE 1.4.0.0）已分别核对原生更新、结果消费、换图、
+    // 坐标保存/恢复完整指令链：对象字段与调用约定不变，代码段并非统一平移。
+    // saveYaw 内的相对调用位移也属于签名；不能仅替换下面的入口 RVA。
     // 不只核对挂钩入口：结果复制、最终消费者和换图函数同时验证，防止版本/其它
     // 补丁改变交接约定。本适配失败时只禁用回访，现有宝箱/探索功能仍可使用。
-    const unsigned char update[]={0x40,0x57,0x48,0x83,0xEC,0x30,0x80,0xB9,0x0B,0x03,0,0,0,0x48,0x8B,0xF9};
-    const unsigned char jump[]={0x48,0x89,0x5C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xEC,0x40};
-    const unsigned char load[]={0x48,0x89,0x5C,0x24,0x20,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57};
-    const unsigned char consume[]={0x40,0x57,0x48,0x83,0xEC,0x20,0x48,0x63,0x81,0xEC,0,0,0,0x48,0x8B,0xF9};
-    const unsigned char copy[]={0x48,0x8B,0x82,0xC0,0x03,0,0,0x48,0x89,0x87,0x10,0x03,0,0};
-    const unsigned char close[]={0x40,0x53,0x48,0x83,0xEC,0x30,0x48,0x63,0x81,0xEC,0,0,0,0x48,0x8B,0xD9};
-    const unsigned char actorGetter[]={0x48,0x8B,0x41,0x60,0xC3};
-    const unsigned char savePosition[]={0x8B,0x88,0xE8,0,0,0,0x89,0x8F,0x2C,0x14,0x05,0,
-        0x8B,0x88,0xEC,0,0,0,0x89,0x8F,0x30,0x14,0x05,0,0x8B,0x80,0xF0,0,0,0,0x89,0x87,0x34,0x14,0x05,0};
-    const unsigned char saveYaw[]={0x48,0x8D,0x90,0x08,0x01,0,0,0x4C,0x8D,0x45,0xA7,
-        0x48,0x8D,0x4D,0x97,0xE8,0x51,0x8B,0xC2,0xFF,0xF3,0x0F,0x10,0x4D,0x9F,
-        0xF3,0x0F,0x10,0x45,0x97,0xE8,0x4A,0x6D,0x46,0};
-    const unsigned char loadPosition[]={0xF3,0x0F,0x10,0x96,0xA8,0x1B,0,0,0xF3,0x0F,0x11,0x90,0xD8,0,0,0};
-    const unsigned char resolvePlace[]={0xE8,0xCA,0x60,0,0,0x48,0x89,0x86,0x48,0x06,0,0};
-    if (!Matches(base+0x3D68F0,update) || !Matches(base+0x29CE70,jump) ||
-        !Matches(base+0x29CF90,load) || !Matches(base+0x299590,consume) ||
-        !Matches(base+0x3D69C9,copy) || !Matches(base+0x3E86B0,close) ||
-        !Matches(base+0x2E0880,actorGetter) || !Matches(base+0x43926F,savePosition) ||
-        !Matches(base+0x4392AB,saveYaw) || !Matches(base+0x29F056,loadPosition) || !Matches(base+0x29F251,resolvePlace)) {
+    const unsigned char update[]={
+        0x40,0x57,0x48,0x83,0xEC,0x30,0x80,0xB9,0x0B,0x03,0x00,0x00,0x00,0x48,0x8B,0xF9
+    };
+    const unsigned char jump[]={
+        0x48,0x89,0x5C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xEC,0x40
+    };
+    const unsigned char load[]={
+        0x48,0x89,0x5C,0x24,0x20,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57
+    };
+    const unsigned char consume[]={
+        0x40,0x57,0x48,0x83,0xEC,0x20,0x48,0x63,0x81,0xEC,0x00,0x00,0x00,0x48,0x8B,0xF9
+    };
+    const unsigned char copy[]={
+        0x48,0x8B,0x82,0xC0,0x03,0x00,0x00,0x48,0x89,0x87,0x10,0x03,0x00,0x00
+    };
+    const unsigned char close[]={
+        0x40,0x53,0x48,0x83,0xEC,0x30,0x48,0x63,0x81,0xEC,0x00,0x00,0x00,0x48,0x8B,0xD9
+    };
+    const unsigned char actorGetter[]={
+        0x48,0x8B,0x41,0x60,0xC3
+    };
+    const unsigned char savePosition[]={
+        0x8B,0x88,0xE8,0x00,0x00,0x00,0x89,0x8F,0x2C,0x14,0x05,0x00,0x8B,0x88,0xEC,0x00,
+        0x00,0x00,0x89,0x8F,0x30,0x14,0x05,0x00,0x8B,0x80,0xF0,0x00,0x00,0x00,0x89,0x87,
+        0x34,0x14,0x05,0x00
+    };
+    const unsigned char saveYaw[]={
+        0x48,0x8D,0x90,0x08,0x01,0x00,0x00,0x4C,0x8D,0x45,0xA7,0x48,0x8D,0x4D,0x97,0xE8,
+        0xD1,0x82,0xC2,0xFF,0xF3,0x0F,0x10,0x4D,0x9F,0xF3,0x0F,0x10,0x45,0x97,0xE8,0xDA,
+        0x72,0x46,0x00
+    };
+    const unsigned char loadPosition[]={
+        0xF3,0x0F,0x10,0x96,0xA8,0x1B,0x00,0x00,0xF3,0x0F,0x11,0x90,0xD8,0x00,0x00,0x00
+    };
+    const unsigned char resolvePlace[]={
+        0xE8,0xCA,0x60,0x00,0x00,0x48,0x89,0x86,0x48,0x06,0x00,0x00
+    };
+    if (!Matches(base+0x3D7140,update) || !Matches(base+0x29D4B0,jump) ||
+        !Matches(base+0x29D5D0,load) || !Matches(base+0x299BD0,consume) ||
+        !Matches(base+0x3D7219,copy) || !Matches(base+0x3E8F00,close) ||
+        !Matches(base+0x2E0EC0,actorGetter) || !Matches(base+0x439AEF,savePosition) ||
+        !Matches(base+0x439B2B,saveYaw) || !Matches(base+0x29F696,loadPosition) || !Matches(base+0x29F891,resolvePlace)) {
         Log("Revisit: native adapter validation failed."); return;
     }
-    void* updateTarget=reinterpret_cast<void*>(base+0x3D68F0);
-    void* jumpTarget=reinterpret_cast<void*>(base+0x29CE70);
+    void* updateTarget=reinterpret_cast<void*>(base+0x3D7140);
+    void* jumpTarget=reinterpret_cast<void*>(base+0x29D4B0);
     if (MH_CreateHook(updateTarget,reinterpret_cast<void*>(&Sky2RevisitUpdateShim),&Sky2NextRevisitUpdate)!=MH_OK) return;
     if (MH_CreateHook(jumpTarget,reinterpret_cast<void*>(&Sky2RevisitJumpShim),&Sky2NextRevisitJump)!=MH_OK) {
         MH_RemoveHook(updateTarget); return;
@@ -1221,7 +1247,7 @@ void InstallRevisitNative(uintptr_t gameBase) noexcept {
         MH_DisableHook(updateTarget); MH_DisableHook(jumpTarget);
         MH_RemoveHook(updateTarget); MH_RemoveHook(jumpTarget); return;
     }
-    nativeLoad=reinterpret_cast<NativeLoad>(base+0x29CF90);
+    nativeLoad=reinterpret_cast<NativeLoad>(base+0x29D5D0);
     available.store(true);
     Log("Revisit: chapter 0-9 native map-result and guarded exact-position return adapter ready.");
 }

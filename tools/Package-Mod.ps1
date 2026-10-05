@@ -13,8 +13,14 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
+$gameVersion = & (Join-Path $PSScriptRoot 'Get-GameVersion.ps1')
 $source = (Resolve-Path -LiteralPath $DllPath).Path
 $hash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+# Mod 会把运行时支持的 EXE 指纹编译进二进制；拒绝把旧构建重新标注为新版本。
+# 官方 Loader 不包含 Mod 版本标记，仍由下方的上游完整 DLL 指纹独立验证。
+if ($Distribution -ne 'Loader' -and -not [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($source)).Contains($gameVersion.ExeSha256)) {
+    throw 'Mod 二进制没有当前游戏版本指纹，请从当前源码重新构建后打包。'
+}
 $cmake = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'CMakeLists.txt')
 if ($cmake -notmatch 'project\(Sky2ChestTracker VERSION ([0-9]+\.[0-9]+\.[0-9]+)') { throw '找不到项目版本。' }
 $version = $Matches[1]
@@ -65,13 +71,17 @@ New-Item -ItemType Directory -Path $scriptDirectory -Force | Out-Null
 # 清单仅在安装包内用于校验，不复制到游戏；每个分发的载荷必须恰好两项。
 $metadata = [ordered]@{
     schema = 2; type = $type; product = $product; version = $version; path = $path; sha256 = $hash
-    exe_sha256 = 'd8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf'
+    exe_sha256 = $gameVersion.ExeSha256
     files = @(
         [ordered]@{ path = $path; sha256 = $hash },
         [ordered]@{ path = $licensePath; sha256 = (Get-FileHash -LiteralPath $license -Algorithm SHA256).Hash }
     )
 }
 $metadata | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $scriptDirectory 'manifest.json') -Encoding utf8
+# 安装器使用同一份原生版本定义；这些文件只保存在解压包中，不进入游戏载荷。
+Copy-Item -LiteralPath (Join-Path $projectRoot 'native/game_version.h') -Destination (Join-Path $scriptDirectory 'game_version.h')
+$versionReader = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Get-GameVersion.ps1'))
+[IO.File]::WriteAllText((Join-Path $scriptDirectory 'Get-GameVersion.ps1'), $versionReader, (New-Object Text.UTF8Encoding($true)))
 # 各包只包含对应入口所需脚本，避免把其他产品的入口混入当前分发。
 # 写成 UTF-8 BOM，确保 Windows PowerShell 5.1 正确解析中文提示。
 $scripts = if ($Distribution -eq 'Loader') {

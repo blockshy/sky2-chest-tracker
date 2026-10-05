@@ -42,7 +42,7 @@ struct Fixture {
         tracker::g_forestBase=Address(image); tracker::g_forestInstalled.store(true);
         tracker::g_testExperimentalTrip=false;
         tracker::g_testExperimentalChapter=UINT32_MAX;tracker::g_testObservedChapter=UINT32_MAX;
-        Put(image,0xC60E08,Address(field)); Put(image,0xC60E58,Address(save));
+        Put(image,0xC61318,Address(field)); Put(image,0xC61368,Address(save));
         std::memcpy(field.data()+0x170,"mp0081",7); Put(field,0x190,uint32_t{6});
         // 刻意使用加载期 busy 状态且无玩家、主地图、脚下地点，验证不会漏掉首次 Reinit。
         Put(field,0x1BC8,uint32_t{0x4001});

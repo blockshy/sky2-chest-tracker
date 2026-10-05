@@ -13,7 +13,8 @@ inline constexpr char kScene[]="mp0081";
 inline constexpr uint32_t kPlace=1008100u;
 inline constexpr uint32_t kRegion=1u;
 inline constexpr uint32_t kVariant=0u;
-inline constexpr uintptr_t kEnableBuiltinRva=0x49E200u;
+// Build 25721473 的 map_event_box_set_enable 原生 builtin；仍由 RDX 传入 VM 上下文。
+inline constexpr uintptr_t kEnableBuiltinRva=0x49EA80u;
 inline constexpr uint32_t kIntegerTag=0x40000000u;
 
 // 精确匹配已经逐个审核的机关名称。禁止用“EV_”前缀或数字转换后的宽松匹配，

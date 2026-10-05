@@ -58,7 +58,8 @@ int main() {
 
 #ifdef _WIN32
     // 使用私有虚拟内存复现全局指针和设置对象，验证读取层，而非重复真实游戏的流程。
-    constexpr size_t managerRva = 0xC60E50;
+    // 1.4.0 的设置全局指针已重定位，文本语言在对象内的偏移维持不变。
+    constexpr size_t managerRva = 0xC61360;
     constexpr size_t languageOffset = 0x623A31;
     const auto image = static_cast<unsigned char*>(VirtualAlloc(nullptr, managerRva + sizeof(uintptr_t),
                                                                MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));

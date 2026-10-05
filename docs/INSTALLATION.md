@@ -2,7 +2,7 @@
 
 [项目首页](../README.md) · [操作说明](USAGE.md) · [全传送与精确返程](TRAVEL.md)
 
-本文对应 **0.6.0**。安装包与 SHA-256 校验文件见 [0.6.0 Release](https://github.com/blockshy/sky2-chest-tracker/releases/tag/v0.6.0)。可以使用 PowerShell 脚本，也可以手动复制，无需 Python 或开发工具。
+本文对应以 **0.6.0 为基础的游戏 1.4.0 兼容性开发版**，尚未发布新的 Release。[0.6.0 Release](https://github.com/blockshy/sky2-chest-tracker/releases/tag/v0.6.0) 现有附件只支持旧游戏 build 25386012，不能用于游戏 1.4.0。当前 `main` 的测试包需先按 [构建指南](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/BUILDING.md) 生成；已有匹配的构建包后，可以使用 PowerShell 脚本或手动复制进行安装，安装本身无需 Python 或开发工具。
 
 ## 目录
 
@@ -28,26 +28,29 @@
 
 ## 兼容版本
 
-| 项目 | 当前支持 |
+| 项目 | 当前 `main` 的适配目标 |
 | --- | --- |
 | 游戏 | Trails in the Sky 2nd Chapter / 空之轨迹 the 2nd |
 | 平台 | Steam、Windows x64 |
-| Steam build | 25386012 |
+| 游戏文件版本 | 1.4.0.0 |
+| Steam build | 25721473 |
 | 渲染路径 | 原生 Direct3D 11 |
 | 面板语言 | 简体中文、繁体中文、日文、英文、德文、法文、西班牙文、韩文，自动跟随游戏文字语言 |
-| 手柄提示 | Xbox ABXY，支持已实测的 Steam Input 环境 |
+| 手柄提示 | Xbox ABXY；1.4.0 中的实测范围见兼容性记录 |
 
-支持的 `sora_2nd.exe` SHA-256：
+当前开发版允许的 `sora_2nd.exe` SHA-256：
 
 ```text
-d8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf
+cab62e5872222efb2aaf272be47f14263db4e7132ad7df5255db8efbee9959ea
 ```
+
+已发布 0.6.0 附件使用旧 build 25386012，EXE SHA-256 为 `d8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf`。两个构建的支持范围不能互换；本次已完成与待完成的验证见 [1.4.0 兼容性记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/GAME_1_4_0_COMPATIBILITY.md)。
 
 八种语言的文本已包含在独立版 DLL 与 ASI 插件中，不需下载语言包或往游戏目录增加翻译文件。只跟随游戏的**文字语言**，不跟随语音、Steam 客户端或 Windows 语言；八种有效文字语言分别使用各自的界面与原生地点名称。
 
 显示中日韩文字需要本机具备相应 Windows 字体。若出现方框、缺字或字体缺失提示，请安装 Windows 对应的简体中文／繁体中文／日文／韩文补充字体后重启游戏；本项目不捆绑游戏或系统字体。完整说明见 [语言与字体](USAGE.md#语言与字体)。
 
-安装器和运行时都会检查游戏版本；不匹配时不启用游戏挂钩。手动安装前可使用以下只读命令核对，比较哈希时忽略字母大小写：
+版本权威来源为 `native/game_version.h`；发行包在 `installer/` 中携带同一份版本定义，安装器与运行时都会检查游戏版本，不匹配时不启用游戏挂钩。手动安装前可使用以下只读命令核对，比较哈希时忽略字母大小写：
 
 ```powershell
 Get-FileHash -LiteralPath '你的游戏安装目录\sora_2nd.exe' -Algorithm SHA256
@@ -55,13 +58,13 @@ Get-FileHash -LiteralPath '你的游戏安装目录\sora_2nd.exe' -Algorithm SHA
 
 ## 开始前
 
-1. 完整解压 `Sky2ChestTracker-0.6.0-Standalone.zip`。GitHub 的 **Source code** 包只有源码，不能直接安装。
+1. 完整解压与目标 EXE 匹配的独立版包。当前源码打包仍命名为 `Sky2ChestTracker-0.6.0-Standalone.zip`，需核对来源与清单，不能与旧 Release 附件混用。GitHub 的 **Source code** 包只有源码，不能直接安装。
 2. 保存所需进度并正常退出游戏，找到包含 `sora_2nd.exe` 的游戏根目录。
 3. 已有 `xinput1_4.dll` 时先核对来源；未知同名文件不覆盖、不删除。
 
 **`dist/` 中全部内容就是需要复制的游戏文件。**文档、脚本和校验资料位于包内其他位置，不复制到游戏，也不生成安装收据 JSON。
 
-本次八语构建重新发布仍使用版本 **0.6.0**，不带修订号。请重新下载当前 Release 附件及对应 `.sha256`，以包内 `installer/manifest.json` 的文件哈希核对构建；同为 0.6.0 的旧附件不能仅凭文件名或面板版本区分。当前包的 `dist/` 不含 `manifest.json` 或 `install.json`，八语支持不改变精简安装结构。
+当前兼容性修改尚未发布，不会因重新下载旧 Release 而获得修复。请同时核对包内 `installer/manifest.json` 的 `exe_sha256` 和载荷哈希；同为 0.6.0 的包不能仅凭文件名或面板版本区分。`dist/` 不含 `manifest.json` 或 `install.json`，版本定义和校验资料均留在解压包内。
 
 ## 脚本安装、更新与卸载
 
@@ -81,13 +84,15 @@ Get-FileHash -LiteralPath '你的游戏安装目录\sora_2nd.exe' -Algorithm SHA
 
 旧版收据、拆分许可证和说明文件仅在路径、产品与已知内容均可核对时清理；修改过或未知文件保留，目录仅在为空时删除。不凭旧收据中的哈希认领未知 DLL，不递归删除 Mod 目录。只替换脚本不会更新 DLL。
 
+升级游戏不会撤销已发布 DLL 的历史归属白名单。旧版 `revisit-return.dat`、`revisit-history/` 保留，旧 ASI 目录迁移时保持其原始 EXE 指纹。1.4.0 开发版改用 `revisit-return-25721473.dat`、`revisit-history-25721473/`，不自动读取或跨版本执行旧记录，也不改写指纹将其视为新版记录。
+
 ### 脚本卸载
 
 ```powershell
 .\Uninstall-Mod.ps1 -GamePath '你的游戏安装目录'
 ```
 
-只删除确认属于本产品的 DLL 和对应许可；保留存档、日志、返程数据及未知文件。DLL 已被其他 Mod 替换时停止。
+只删除确认属于本产品的 DLL 和对应许可；保留存档、日志、返程数据及未知文件。卸载不要求游戏仍为该包支持的版本，官方更新后仍可卸载已知旧 Mod；DLL 已被其他 Mod 替换时停止。
 
 ### 先预演，不改文件
 
@@ -158,7 +163,8 @@ Get-FileHash -LiteralPath '你的游戏安装目录\xinput1_4.dll' -Algorithm SH
 | --- | --- |
 | `Sky2ChestTracker/LICENSES.txt` | 合并后的完整项目及第三方许可，安装时提供 |
 | `Sky2ChestTracker/tracker.log` | 单个诊断日志，运行时生成并限制大小 |
-| `Sky2ChestTracker/revisit-return.dat` | 最近的出发点，使用传送后生成 |
-| `Sky2ChestTracker/revisit-history/` | 历次返程记录，更新、卸载和转移游戏时保留 |
+| `Sky2ChestTracker/revisit-return-25721473.dat` | 1.4.0 的最近出发点，使用传送后生成 |
+| `Sky2ChestTracker/revisit-history-25721473/` | 1.4.0 的历次返程记录，更新、卸载和转移游戏时保留 |
+| `Sky2ChestTracker/revisit-return.dat`、`Sky2ChestTracker/revisit-history/` | 旧游戏的历史数据，原样保留，不自动导入新版 |
 
 ASI 的对应数据位于 `plugins/Sky2ChestTracker/`。返程文件不绑定存档栏位，也不保存整份进度，详见 [传送指南](TRAVEL.md)。卸载 Mod 不会撤销已经保存的剧情、道具或开箱变化。

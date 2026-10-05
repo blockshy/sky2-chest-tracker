@@ -52,7 +52,7 @@ bool GuardTableRow(uintptr_t rowPointer, uint32_t& row) noexcept {
     uintptr_t tables = 0, holder = 0, file = 0, buffer = 0, headers = 0;
     uint32_t headerIndex = 0, offset = 0, stride = 0, count = 0;
     // 与宝箱图标已有适配使用相同的 t_tbox 管理器入口；行号从真实表范围还原。
-    if (!GuardRead(g_revisitGuardBase + 0xC5D778, tables) || tables < 0x10000 ||
+    if (!GuardRead(g_revisitGuardBase + 0xC5DC88, tables) || tables < 0x10000 ||
         !GuardRead(tables + 0x108, holder) || holder < 0x10000 ||
         !GuardRead(holder + 8, file) || file < 0x10000 ||
         !GuardRead(file + 0x10, buffer) || buffer < 0x10000 ||
@@ -75,7 +75,7 @@ bool GuardPlaceIdentity(uint32_t id, uint32_t region, uint8_t variant,
                         const char* scene) noexcept {
     uintptr_t tables = 0, holder = 0, file = 0, buffer = 0, headers = 0;
     uint32_t headerIndex = 0, offset = 0, stride = 0, count = 0;
-    if (!id || !GuardRead(g_revisitGuardBase + 0xC5D778, tables) ||
+    if (!id || !GuardRead(g_revisitGuardBase + 0xC5DC88, tables) ||
         !GuardRead(tables + 0x60, holder) || !GuardRead(holder + 8, file) ||
         !GuardRead(file + 0x10, buffer) || !GuardRead(file + 0x20, headers) ||
         !GuardRead(file + 0x2C, headerIndex) || headerIndex > 1024) return false;
@@ -109,7 +109,7 @@ bool GuardContext(char (&scene)[32], uint32_t& chapter, bool& completed,
     char staticScene[32]{}, rootScene[32]{};
     std::array<uint8_t, 4096> flags{};
     // 同时核对字段管理器当前场景和静态地图数据，避免转场过程中把旧地图名配新对象。
-    if (!GuardRead(g_revisitGuardBase + 0xC60E08, field) || field < 0x10000 ||
+    if (!GuardRead(g_revisitGuardBase + 0xC61318, field) || field < 0x10000 ||
         !GuardRead(field + 0x1BC8, changing) || changing != 0 ||
         !GuardRead(field + 0x190, sceneLength) || !sceneLength || sceneLength >= sizeof(scene) ||
         !GuardString(field + 0x170, scene) || std::strlen(scene) != sceneLength ||
@@ -126,7 +126,7 @@ bool GuardContext(char (&scene)[32], uint32_t& chapter, bool& completed,
         rootVariant != variant ||
         !GuardPlaceIdentity(place, region, variant, scene) ||
         !GuardPlaceIdentity(rootPlace, rootRegion, rootVariant, scene) ||
-        !GuardRead(g_revisitGuardBase + 0xC60E58, savedata) || savedata < 0x10000 ||
+        !GuardRead(g_revisitGuardBase + 0xC61368, savedata) || savedata < 0x10000 ||
         !GuardRead(savedata + 0x11100 + 12 * 4, chapter) ||
         !GuardReadBytes(savedata + 0x100, flags.data(), flags.size())) return false;
     // 先将经过 t_place 验证的地形/主地点关系归一，再检查剧情。地区 0 不是通行证，
@@ -189,31 +189,33 @@ extern "C" void Sky2GuardTBoxScriptStart(uintptr_t caller, uintptr_t tableRow,
 bool InstallRevisitEventGuard(uintptr_t gameBase) noexcept {
     if (g_revisitGuardInstalled.load()) return g_revisitGuardBase == gameBase;
     g_revisitGuardBase = gameBase;
+    // Build 25721473：TBoxProcess 调用链仍以 RSI 保存宝箱行，唯一返回地址为
+    // 0x2E1DAC。脚本名、一个 tagged-int 参数及原入口 RSP+0x4C 的槽位均已复核；
+    // 参数签名中的字符串/存档管理器 RIP 位移必须随本构建同步，不能沿用旧字节。
     // 不只验证通用启动函数，还核对唯一调用点的 RSI 取参、整数编码、临时栈槽和
     // 参数数量。任一变化均停止安装，防止把别的脚本或别的调用约定当成宝箱入口。
     const unsigned char start[] = {
-        0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x6C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,
-        0x57,0x48,0x83,0xEC,0x30,0x0F,0xB6,0x81,0x08,0x04,0,0
+        0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x6C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,
+        0x48,0x83,0xEC,0x30,0x0F,0xB6,0x81,0x08,0x04,0x00,0x00
     };
     const unsigned char parameter[] = {
-        0x8B,0x46,0x10,0x48,0x8D,0x3D,0x9C,0x45,0x82,0,0x48,0x8B,0x1D,0xC5,0xF7,0x97,0,
-        0x4C,0x8D,0x4C,0x24,0x40,0x25,0xFF,0xFF,0xFF,0x3F,0x44,0x89,0x64,0x24,0x40,
+        0x8B,0x46,0x10,0x48,0x8D,0x3D,0xBC,0x3F,0x82,0x00,0x48,0x8B,0x1D,0x95,0xF6,0x97,
+        0x00,0x4C,0x8D,0x4C,0x24,0x40,0x25,0xFF,0xFF,0xFF,0x3F,0x44,0x89,0x64,0x24,0x40,
         0x0F,0xBA,0xE8,0x1E
     };
     const unsigned char call[] = {
-        0x4C,0x8D,0x4C,0x24,0x44,0xC7,0x44,0x24,0x20,0x01,0,0,0,
-        0x4C,0x89,0xA0,0xD0,0x02,0,0,0x48,0x8B,0x83,0x90,0x16,0x01,0,
-        0x4C,0x89,0xA0,0xD8,0x02,0,0,0x48,0x8B,0x8B,0x90,0x16,0x01,0,
-        0x48,0x8B,0x01,0xFF,0x50,0x10
+        0x4C,0x8D,0x4C,0x24,0x44,0xC7,0x44,0x24,0x20,0x01,0x00,0x00,0x00,0x4C,0x89,0xA0,
+        0xD0,0x02,0x00,0x00,0x48,0x8B,0x83,0x90,0x16,0x01,0x00,0x4C,0x89,0xA0,0xD8,0x02,
+        0x00,0x00,0x48,0x8B,0x8B,0x90,0x16,0x01,0x00,0x48,0x8B,0x01,0xFF,0x50,0x10
     };
     char function[32]{};
-    if (!GuardMatches(gameBase + 0x4CD730, start) ||
-        !GuardMatches(gameBase + 0x2E1682, parameter) || !GuardMatches(gameBase + 0x2E173D, call) ||
-        !GuardString(gameBase + 0xB05C28, function) || std::strcmp(function, "system.TBoxProcess")) {
+    if (!GuardMatches(gameBase + 0x4CDFB0, start) ||
+        !GuardMatches(gameBase + 0x2E1CC2, parameter) || !GuardMatches(gameBase + 0x2E1D7D, call) ||
+        !GuardString(gameBase + 0xB05C88, function) || std::strcmp(function, "system.TBoxProcess")) {
         Log("Revisit: special chest hook validation failed; revisit must remain unavailable.");
         return false;
     }
-    auto* target = reinterpret_cast<void*>(gameBase + 0x4CD730);
+    auto* target = reinterpret_cast<void*>(gameBase + 0x4CDFB0);
     if (MH_CreateHook(target, reinterpret_cast<void*>(&Sky2RevisitScriptStartShim),
                       &Sky2NextRevisitScriptStart) != MH_OK) return false;
     if (MH_EnableHook(target) != MH_OK) { MH_RemoveHook(target); return false; }

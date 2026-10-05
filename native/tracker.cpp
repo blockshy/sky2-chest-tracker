@@ -8,6 +8,7 @@
 #include "chest_catalog.h"
 #include "runtime_files.h"
 #include "game_language.h"
+#include "game_version.h"
 #include <bcrypt.h>
 #include <MinHook.h>
 #include <algorithm>
@@ -17,6 +18,12 @@
 #include <cstring>
 #include <fstream>
 #include <vector>
+#include <string_view>
+
+// 资源生成目录与下方已审查的 1.4.0 原生地址必须属于同一 EXE。直接调用 CMake
+// 也不能跳过这个约束；陈旧目录或擅自替换生成哈希会在编译期失败。
+static_assert(std::string_view(kExeSha256) == sky2::game_version::kSupportedExeSha256,
+              "Game catalog and audited native addresses target different executables.");
 
 namespace tracker {
 HMODULE g_module = nullptr;
@@ -59,7 +66,7 @@ void Log(const char* message) noexcept {
 static bool Snapshot(std::array<uint8_t, 4096>& flags) noexcept {
     uintptr_t manager = 0;
     // 此全局位置由当前 EXE 中的 RIP 引用得出，使用前已校验完整文件 SHA-256。
-    return Read(g_base + 0xC60E58, manager) && ReadBytes(manager + 0x100, flags.data(), flags.size());
+    return Read(g_base + 0xC61368, manager) && ReadBytes(manager + 0x100, flags.data(), flags.size());
 }
 
 // 区域地图以 t_tbox.tbl 行指针生成图标，而不是逐帧调用场景宝箱的虚函数。
@@ -67,7 +74,7 @@ static bool Snapshot(std::array<uint8_t, 4096>& flags) noexcept {
 static const ChestRecord* RecordFromTable(uintptr_t rowPointer) noexcept {
     uintptr_t tables = 0, holder = 0, file = 0, buffer = 0, headers = 0;
     uint32_t headerIndex = 0, offset = 0, stride = 0, count = 0;
-    if (!Read(g_base + 0xC5D778, tables) || !Read(tables + 0x108, holder) ||
+    if (!Read(g_base + 0xC5DC88, tables) || !Read(tables + 0x108, holder) ||
         !Read(holder + 8, file) || !Read(file + 0x10, buffer) || !Read(file + 0x20, headers) ||
         !Read(file + 0x28, headerIndex) || headerIndex > 4096) return nullptr;
     const auto header = headers + static_cast<uintptr_t>(headerIndex) * 80;
@@ -87,7 +94,7 @@ static uint32_t __fastcall SelectMapIcon(void* manager, const void* tableRow) no
     if (!chest) return g_originalMapIcon(manager, tableRow);
     uintptr_t flags = 0;
     uint8_t currentByte = 0, inheritedByte = 0;
-    if (!Read(g_base + 0xC60E58, flags) ||
+    if (!Read(g_base + 0xC61368, flags) ||
         !Read(flags + 0x100 + chest->opened / 8, currentByte)) return g_originalMapIcon(manager, tableRow);
     const bool current = (currentByte & (1u << (chest->opened % 8))) != 0;
     bool inherited = false;
@@ -114,7 +121,7 @@ static uint32_t __fastcall SelectIcon(void* behavior) noexcept {
     if (!chest || !Read(self + 0xA0, inheritedId)) return g_originalIcon(behavior);
     uintptr_t manager = 0;
     uint8_t currentByte = 0, inheritedByte = 0;
-    if (!Read(g_base + 0xC60E58, manager) || openedId >= 32768 || !Read(manager + 0x100 + openedId / 8, currentByte))
+    if (!Read(g_base + 0xC61368, manager) || openedId >= 32768 || !Read(manager + 0x100 + openedId / 8, currentByte))
         return g_originalIcon(behavior);
     const bool opened = (currentByte & (1u << (openedId % 8))) != 0;
     bool inherited = false;
@@ -161,7 +168,14 @@ static bool CheckExecutable() {
     if (status < 0) return false;
     char hex[65]{};
     for (size_t i = 0; i < digest.size(); ++i) sprintf_s(hex + i * 2, sizeof(hex) - i * 2, "%02x", digest[i]);
-    return std::strcmp(hex, kExeSha256) == 0;
+    // 运行时信任经过地址审查的固定版本，不能让重新生成资源目录自行扩大白名单。
+    // 记录实际哈希有助于下一次官方更新后快速判断拒绝原因，不包含玩家进度。
+    const bool supported = std::strcmp(hex, sky2::game_version::kSupportedExeSha256) == 0;
+    if (!supported) {
+        Log((std::string("Executable SHA-256: ") + hex).c_str());
+        Log((std::string("Expected executable SHA-256: ") + sky2::game_version::kSupportedExeSha256).c_str());
+    }
+    return supported;
 }
 
 static DWORD WINAPI Initialize(void* context) noexcept {
@@ -195,14 +209,16 @@ static DWORD WINAPI Initialize(void* context) noexcept {
         // 只在 EXE 哈希验证通过后绑定语言地址；读取文本语言，不修改设置或语音选项。
         InitializeGameLanguage(g_base);
         // 双重校验：磁盘哈希正确且内存中虚表仍指向预期函数，避免覆盖其他 Mod 的挂钩。
-        auto slot = reinterpret_cast<void**>(g_base + 0xB04E10 + 9 * sizeof(void*));
+        // 1.4.0 已通过 TBoxBehavior 的 RTTI 身份、第九槽目标及两个宝箱函数的
+        // 完整指令对照确认：对象字段和旗标语义不变，仅链接地址发生重定位。
+        auto slot = reinterpret_cast<void**>(g_base + 0xB04E70 + 9 * sizeof(void*));
         void* old = nullptr;
-        if (!Read(reinterpret_cast<uintptr_t>(slot), old) || old != reinterpret_cast<void*>(g_base + 0x2C6BC0)) {
+        if (!Read(reinterpret_cast<uintptr_t>(slot), old) || old != reinterpret_cast<void*>(g_base + 0x2C7200)) {
             Log("Icon vtable conflict; all hooks skipped."); return 0;
         }
         const unsigned char expected[] = {0x48,0x83,0xEC,0x28,0x48,0x8B,0x41,0x08,0x4C,0x8B,0xC1};
         unsigned char actual[sizeof(expected)]{};
-        if (!ReadBytes(g_base + 0x2C6BC0, actual, sizeof(actual)) || std::memcmp(expected, actual, sizeof(actual))) {
+        if (!ReadBytes(g_base + 0x2C7200, actual, sizeof(actual)) || std::memcmp(expected, actual, sizeof(actual))) {
             Log("Icon function conflict; all hooks skipped."); return 0;
         }
         // 面板安装成功后才启用地图修改，否则用户无法辨认当前选择的是哪种统计口径。
@@ -212,7 +228,7 @@ static DWORD WINAPI Initialize(void* context) noexcept {
         InstallExploration(g_base);
         InstallRevisit(g_base, g_folder);
         // 正式地图使用此表驱动函数；同时保留下方对象虚表挂钩，覆盖按对象取图标的路径。
-        auto mapFunction = reinterpret_cast<void*>(g_base + 0x3DD0E0);
+        auto mapFunction = reinterpret_cast<void*>(g_base + 0x3DD930);
         const unsigned char mapExpected[] = {0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x6C,0x24,0x10};
         unsigned char mapActual[sizeof(mapExpected)]{};
         if (!ReadBytes(reinterpret_cast<uintptr_t>(mapFunction), mapActual, sizeof(mapActual)) ||
@@ -223,6 +239,7 @@ static DWORD WINAPI Initialize(void* context) noexcept {
             Log("Regional map hook conflict; map modification disabled."); return 0;
         }
         Log("Regional map table hook installed.");
+        Log("Validated game 1.4.0.0 (Steam build 25721473).");
         DWORD protection = 0;
         if (!VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &protection)) return 0;
         g_originalIcon = reinterpret_cast<GetIconFn>(old);

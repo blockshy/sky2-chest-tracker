@@ -8,6 +8,7 @@ import argparse
 import json
 from localized_game_names import (LANGUAGES, cpp_array, load_language_resources,
                                   read_places, scene_region)
+from game_version import assert_supported_game
 
 
 # 显式对应原生地点 ID，避免用中英文模糊匹配把同名道路或隧道归错组。
@@ -143,8 +144,13 @@ def write_localized_maps(rows: list[dict], output: Path) -> None:
 
 def extract(game: Path, catalog_path: Path, out: Path) -> None:
     """输出 JSON 供离线核对，以及无需游戏运行时加载文件的 C++ 常量表。"""
+    # 单独运行地图生成器也必须检查 EXE 和上游目录，避免把旧宝箱索引配到新资源。
+    exe_sha256 = assert_supported_game(game)
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    if catalog.get("exe_sha256") != exe_sha256:
+        raise ValueError("宝箱目录 EXE 指纹与当前版本不一致，请先重新生成宝箱目录")
     resources = load_language_resources(game)
-    result = build_groups(json.loads(catalog_path.read_text(encoding="utf-8")), resources["sc"].places)
+    result = build_groups(catalog, resources["sc"].places)
     result["schema_version"] = 3
     result["languages"] = list(LANGUAGES)
     result["localized_maps"] = build_localized_maps(result["maps"], resources)

@@ -2,6 +2,8 @@
 
 本页介绍 **0.6.0 独立版与 ASI 插件版共用的功能和键位**，原有 0.5.0 的操作保持一致。安装和文件冲突处理见 [安装指南](INSTALLATION.md)，插件依赖与迁移见 [ASI 指南](ASI_LOADER.md)，完整传送与返程流程见 [全传送指南](TRAVEL.md)，项目概览见 [首页](../README.md)。
 
+当前 `main` 为游戏 **1.4.0 / Steam build 25721473** 的兼容性开发版，尚未发布新 Release；现有 0.6.0 下载附件仍只支持旧游戏。新版返程记录位于各分发数据目录内的 `revisit-return-25721473.dat` 与 `revisit-history-25721473/`；旧 `revisit-return.dat`／`revisit-history/` 保留但不自动导入或跨 EXE 执行，请勿重命名旧文件绕过校验。
+
 ## 目录
 
 - [按用途选择功能](#按用途选择功能)
@@ -150,8 +152,8 @@ Mod 不把这些临时显示批量写成探索或到访记录；实际行走、�
 
 ## 范围与问题反馈
 
-原独立版的宝箱状态、读档回退、地区统计、清单、Xbox 组合键、热切换和重连已有实机验证；地图全显、未到访传送点及地图内即时刷新已有用户本机正常反馈。全传送已有一周目末期、二周目前期相关地点及往返反馈，不能代表全部地点和所有章节组合均已逐一验证。0.6.0 ASI 已在本机 Steam Input／Xbox ABXY 环境确认与诊断探针同时加载、清单操作、提示切换、重连及一次传送返程正常；其他实际 Mod 组合仍需单独验证，适用范围见 [ASI 指南](ASI_LOADER.md#故障排查与兼容范围)。
+旧游戏构建上的独立版宝箱状态、读档回退、地区统计、清单、Xbox 组合键、热切换和重连已有实机验证；地图全显、未到访传送点及地图内即时刷新已有用户本机正常反馈。旧版全传送收到一周目末期、二周目前期相关地点及往返反馈，旧版 0.6.0 ASI 也曾在本机 Steam Input／Xbox ABXY 环境确认与诊断探针同时加载及一次传送返程正常。这些历史结果不能代替 1.4.0 回归，也不覆盖所有地点、章节和其他 Mod 组合；适用范围见 [ASI 指南](ASI_LOADER.md#故障排查与兼容范围)。
 
-上述实机反馈不代表本次八语构建已经完成游戏内全部语言切换验证。尚未逐箱走访全部 566 个宝箱；其他手柄类型、自定义布局、DXVK、第三方注入工具和所有剧情组合未全面覆盖。各构建的验证范围见仓库中的 [测试说明](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/TESTING.md)。
+1.4.0 已完成与待完成的验证见 [兼容性记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/GAME_1_4_0_COMPATIBILITY.md)，通用步骤见 [测试说明](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/TESTING.md)。尚未逐箱走访全部 566 个宝箱；其他手柄类型、自定义布局、DXVK、第三方注入工具、全部语言切换和所有剧情组合未全面覆盖。
 
 反馈问题时提供 Mod 版本、独立版／ASI 分发类型、游戏构建、地图／章节、输入设备、操作步骤及完整提示。独立版日志位于游戏目录的 `Sky2ChestTracker/tracker.log`，ASI 日志位于 `plugins/Sky2ChestTracker/tracker.log`；附相关片段前移除个人信息，无需公开整份存档或内存快照。

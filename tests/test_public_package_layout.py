@@ -5,13 +5,18 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'tools'))
+from game_version import read_game_version
+
 PWSH = shutil.which('pwsh')
-PAYLOAD = b'synthetic package layout binary'
+# 合成构建与实际 Mod 同样内嵌当前运行时指纹，用于验证过期二进制拒绝逻辑。
+PAYLOAD = b'synthetic package layout binary\0' + read_game_version()['exe_sha256'].encode() + b'\0'
 
 
 @unittest.skipUnless(os.name == 'nt' and PWSH, '打包测试需要 Windows 与 PowerShell 7')
@@ -25,10 +30,11 @@ class PackageLayout(unittest.TestCase):
         self.addCleanup(self.clean_fixture)
         self.project = self.root / 'project'
         self.project.mkdir()
-        for directory in ('tools', 'installer', 'licenses', 'docs'):
+        for directory in ('tools', 'installer', 'licenses', 'docs', 'native'):
             (self.project / directory).mkdir()
-        for name in ('Package-Mod.ps1', 'Package-Asi.ps1'):
+        for name in ('Package-Mod.ps1', 'Package-Asi.ps1', 'Get-GameVersion.ps1'):
             shutil.copyfile(ROOT / 'tools' / name, self.project / 'tools' / name)
+        shutil.copyfile(ROOT / 'native/game_version.h', self.project / 'native/game_version.h')
         for name in ('CMakeLists.txt', 'loader-dependency.json', 'LICENSE',
                      'THIRD_PARTY_NOTICES.md', 'README.md', 'Install-Mod.ps1', 'Uninstall-Mod.ps1'):
             shutil.copyfile(ROOT / name, self.project / name)
@@ -75,13 +81,15 @@ class PackageLayout(unittest.TestCase):
         self.assertEqual(manifest['schema'], 2)
         self.assertEqual(manifest['type'], kind)
         self.assertEqual(manifest['path'], binary_path)
+        self.assertEqual(manifest['exe_sha256'], read_game_version()['exe_sha256'])
+        self.assertEqual(files['installer/game_version.h'], (ROOT / 'native/game_version.h').read_bytes())
         self.assertEqual(len(manifest['files']), 2)
         self.assertEqual({entry['path'] for entry in manifest['files']},
                          {binary_path, license_path})
         for entry in manifest['files']:
             self.assertEqual(entry['sha256'].lower(),
                              hashlib.sha256(files['dist/' + entry['path']]).hexdigest())
-        expected_scripts = {'installer/Common.ps1'}
+        expected_scripts = {'installer/Common.ps1', 'installer/Get-GameVersion.ps1'}
         if distribution == 'Loader':
             expected_scripts |= {'installer/Install-Loader.ps1', 'installer/Uninstall-Loader.ps1'}
         else:
@@ -91,7 +99,7 @@ class PackageLayout(unittest.TestCase):
             self.assertTrue(files[name].startswith(b'\xef\xbb\xbf'), name)
         # 玩家包不包含开发指南、生成资源、诊断探针、收据、存档及运行数据。
         allowed = expected_scripts | payload_paths | {
-            'installer/manifest.json', 'installer/known-files.json', 'README.md',
+            'installer/manifest.json', 'installer/known-files.json', 'installer/game_version.h', 'README.md',
             'docs/INSTALLATION.md', 'docs/USAGE.md', 'docs/TRAVEL.md', 'docs/ASI_LOADER.md'}
         self.assertEqual(set(files), allowed)
         if distribution == 'Loader':
@@ -124,6 +132,19 @@ class PackageLayout(unittest.TestCase):
             capture_output=True, text=True, encoding='utf-8')
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.output.exists())
+
+    def test_old_mod_binary_cannot_receive_current_game_manifest(self):
+        """旧二进制内即使有合法的历史指纹，也不能被贴上当前兼容版本的清单。"""
+        self.binary.write_bytes(b'old Mod\0' + read_game_version()['previous_exe_sha256'].encode())
+        for distribution in ('Standalone', 'Plugin'):
+            with self.subTest(distribution=distribution):
+                result = subprocess.run([PWSH, '-NoProfile', '-File',
+                    str(self.project / 'tools/Package-Mod.ps1'), '-Distribution', distribution,
+                    '-DllPath', str(self.binary), '-OutputDirectory', str(self.output)],
+                    capture_output=True, text=True, encoding='utf-8')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('当前游戏版本指纹', result.stdout + result.stderr)
+                self.assertFalse(self.output.exists())
 
 
 if __name__ == '__main__':

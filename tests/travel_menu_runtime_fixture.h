@@ -100,7 +100,7 @@ struct TravelMenuFixture {
         areas = {{{8, 3, 1, 0, {0x81, 0x82}}}};
         flags[0x100 + 6037 / 8] = static_cast<unsigned char>(1u << (6037 % 8));
         Store(image + kFlagsGlobalOffset, reinterpret_cast<uintptr_t>(flags.data()));
-        Store(image + 0xC5D778, reinterpret_cast<uintptr_t>(tableRoot.data()));
+        Store(image + 0xC5DC88, reinterpret_cast<uintptr_t>(tableRoot.data()));
         Put(tableRoot, 0xF0, reinterpret_cast<uintptr_t>(tableHolder.data()));
         Put(tableHolder, 8, reinterpret_cast<uintptr_t>(tableFile.data()));
         Put(tableFile, 0x10, reinterpret_cast<uintptr_t>(tableBuffer.data()));
@@ -117,7 +117,7 @@ struct TravelMenuFixture {
             Put(tableBuffer, 0x104 + i * 152, uint32_t{3});
             Put(tableBuffer, 0x108 + i * 152, uint32_t{8});
         }
-        Store(image + 0xC60E08, reinterpret_cast<uintptr_t>(sceneRoot.data()));
+        Store(image + 0xC61318, reinterpret_cast<uintptr_t>(sceneRoot.data()));
         Put(menu, 8, Manager()); Put(menu, 0x18, Menu()); Put(manager, 0x28, Menu());
         Put(menu, 0x279, uint8_t{1});
         Put(manager, 0x70, reinterpret_cast<uintptr_t>(root.data()));
@@ -130,10 +130,10 @@ struct TravelMenuFixture {
         std::memcpy(originalCamera.data(), manager.data() + 0x100, originalCamera.size());
         for (unsigned i = 0; i < 2; ++i) {
             const auto callback = reinterpret_cast<uintptr_t>(callbacks[i].data());
-            Put(lists[i], 0, image + (i ? 0xB0DC28 : 0xB0DC88));
+            Put(lists[i], 0, image + (i ? 0xB0DCF0 : 0xB0DC90));
             Put(lists[i], 0xF8, Menu()); Put(lists[i], 0x138, callback);
-            Put(callbacks[i], 0, image + 0xB0DB48);
-            Put(callbacks[i], 8, image + (i ? 0x3EB210 : 0x3EB2D0));
+            Put(callbacks[i], 0, image + 0xB0DC20);
+            Put(callbacks[i], 8, image + (i ? 0x3EBA60 : 0x3EBB20));
             Put(callbacks[i], 0x10, Menu());
         }
         Put(menu, 0x1C8, List(0)); Put(menu, 0x1C0, List(1));
@@ -182,7 +182,7 @@ struct TravelMenuFixture {
                 if (!belongs) continue;
             }
             auto& item = items[which][count]; item.fill(0);
-            Put(item, 0, image + 0xB0DCF8); Put(item, 0x28, Display(i));
+            Put(item, 0, image + 0xB0DD60); Put(item, 0x28, Display(i));
             itemPointers[which][count] = reinterpret_cast<uintptr_t>(item.data()); ++count;
         }
         Put(lists[which], 0x38, reinterpret_cast<uintptr_t>(itemPointers[which].data()));
@@ -253,7 +253,7 @@ struct TravelMenuFixture {
         // 显式即时刷新从Mod调用Build，不属于三个原生返回地址；只有线程局部许可已
         // 在完整脚本执行后开启才允许补显。故意传入未核准来源，验证许可确实必需。
         f.result.Check(f.scriptCompleted && tracker::g_travelExplicitBuild &&
-                       !tracker::Sky2BeforeBuildTravel(object, f.image + 0x29EE97),
+                       !tracker::Sky2BeforeBuildTravel(object, f.image + 0x29F4D7),
                        "即时刷新仅在剧情重算完成后的线程局部许可范围内调用构建前辅助");
         f.bank ^= 1u;
         f.CreateDisplay(f.spots[1].visible == 1);

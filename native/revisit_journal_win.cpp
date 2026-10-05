@@ -1,6 +1,7 @@
-// 只读写固定名称的 Mod 返程记录。拒绝链接与损坏文件，避免无意覆盖同名其它数据。
+// 只读写当前已核验游戏构建的 Mod 返程记录。拒绝链接与损坏文件，避免无意覆盖同名其它数据。
 // 游戏存档及 Steam Cloud 文件不在此模块的访问范围。
 #include "revisit_journal.h"
+#include "game_version.h"
 #include <Windows.h>
 #include <bcrypt.h>
 #include <cstdio>
@@ -8,8 +9,24 @@
 
 namespace tracker {
 namespace {
-constexpr wchar_t kRecordName[] = L"\\revisit-return.dat";
-constexpr wchar_t kHistoryName[] = L"\\revisit-history";
+// 存储命名与原生适配使用同一个 Steam build：升级后打开独立的新记录空间，
+// 旧无后缀文件和历史目录保持原位，不尝试执行、重写指纹或自动清理。仅更换
+// 容器指纹会把旧主文件判为 Invalid 并阻塞所有新出发，故名称也必须按构建隔离。
+constexpr bool ValidStorageBuildId() noexcept {
+    if (sizeof(sky2::game_version::kSteamBuildId) <= 1) return false;
+    for (size_t i = 0; i < sizeof(sky2::game_version::kSteamBuildId) - 1; ++i)
+        if (sky2::game_version::kSteamBuildId[i] < '0' || sky2::game_version::kSteamBuildId[i] > '9') return false;
+    return true;
+}
+static_assert(ValidStorageBuildId(), "Return storage requires a nonempty decimal Steam build identifier.");
+std::wstring CurrentJournalPath(const std::wstring& folder, bool history) {
+    // 此函数只在外层受异常保护的 I/O 调用内分配字符串，不在 DLL 加载期间创建全局对象。
+    std::wstring path = folder + (history ? L"\\revisit-history-" : L"\\revisit-return-");
+    for (char digit : sky2::game_version::kSteamBuildId)
+        if (digit) path.push_back(static_cast<wchar_t>(digit));
+    if (!history) path += L".dat";
+    return path;
+}
 bool PlainFolder(const std::wstring& folder) noexcept {
     const DWORD attributes=GetFileAttributesW(folder.c_str());
     return attributes!=INVALID_FILE_ATTRIBUTES && (attributes&FILE_ATTRIBUTE_DIRECTORY) &&
@@ -37,7 +54,7 @@ RevisitRecordRead ReadFilePath(const std::wstring& path, RevisitReturnRecord& re
 // 中止新出发，既不覆盖未知文件，也不会抹去另一份游戏自动存档需要的旧出发点。
 bool PreserveHistory(const std::wstring& folder, const RevisitReturnRecord& record,
                      const RevisitRecordBytes& bytes) {
-    const auto history=folder+kHistoryName;
+    const auto history=CurrentJournalPath(folder,true);
     if (!CreateDirectoryW(history.c_str(),nullptr) && GetLastError()!=ERROR_ALREADY_EXISTS) return false;
     if (!PlainFolder(history)) return false;
     wchar_t name[40]{};
@@ -68,18 +85,18 @@ bool PreserveHistory(const std::wstring& folder, const RevisitReturnRecord& reco
 RevisitRecordRead ReadRevisitRecordFile(const std::wstring& folder, RevisitReturnRecord& record) noexcept {
     try {
         if (!PlainFolder(folder)) return RevisitRecordRead::IoError;
-        return ReadFilePath(folder+kRecordName,record);
+        return ReadFilePath(CurrentJournalPath(folder,false),record);
     } catch (...) { return RevisitRecordRead::IoError; }
 }
 bool WriteRevisitRecordFile(const std::wstring& folder, const RevisitReturnRecord& record) noexcept {
     try {
         RevisitRecordBytes bytes{};
         if (!PlainFolder(folder) || !EncodeRevisitRecord(record,bytes)) return false;
-        const std::wstring target=folder+kRecordName;
+        const std::wstring target=CurrentJournalPath(folder,false);
         RevisitReturnRecord existing{};
         const auto old=ReadFilePath(target,existing);
         if (old!=RevisitRecordRead::Missing && old!=RevisitRecordRead::Valid) return false;
-        // 兼容只有主记录的早期格式：更新主记录之前，同时保留旧记录和本次记录。
+        // 同一构建内更新主记录之前，同时保留原记录和本次记录；不跨构建导入旧文件。
         RevisitRecordBytes oldBytes{};
         if (old==RevisitRecordRead::Valid &&
             (!EncodeRevisitRecord(existing,oldBytes) || !PreserveHistory(folder,existing,oldBytes))) return false;
@@ -121,7 +138,7 @@ bool ReadRevisitRecordHistory(const std::wstring& folder,
         const auto state=ReadRevisitRecordFile(folder,current);
         if (state==RevisitRecordRead::Invalid || state==RevisitRecordRead::IoError) return false;
         if (state==RevisitRecordRead::Valid) records.push_back(current);
-        const auto history=folder+kHistoryName;
+        const auto history=CurrentJournalPath(folder,true);
         const auto attributes=GetFileAttributesW(history.c_str());
         if (attributes==INVALID_FILE_ATTRIBUTES)
             return GetLastError()==ERROR_FILE_NOT_FOUND || GetLastError()==ERROR_PATH_NOT_FOUND;

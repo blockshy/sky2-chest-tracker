@@ -38,14 +38,14 @@ struct Fixture {
         tracker::g_revisitGuardInstalled.store(true);
         tracker::SetRevisitEventGuardActive(true);
         tracker::SetExperimentalRevisitTripActive(false);
-        Put(image, 0xC5D778, Address(tables));
+        Put(image, 0xC5DC88, Address(tables));
         Put(tables, 0x108, Address(holder)); Put(holder, 8, Address(file));
         Put(file, 0x10, Address(rows)); Put(file, 0x20, Address(headers));
         Put(headers, 0x48, uint32_t{120}); Put(headers, 0x4C, uint32_t{571});
         Put(rows, chest.row * 120, reinterpret_cast<uintptr_t>(chest.scene.data()));
         Put(rows, chest.row * 120 + 8, reinterpret_cast<uintptr_t>(chest.name.data()));
         Put(rows, chest.row * 120 + 0x10, chest.scriptParameter);
-        Put(image, 0xC60E08, Address(field)); Put(image, 0xC60E58, Address(savedata));
+        Put(image, 0xC61318, Address(field)); Put(image, 0xC61368, Address(savedata));
         std::memcpy(field.data() + 0x170, chest.scene.data(), chest.scene.size());
         Put(field, 0x190, static_cast<uint32_t>(chest.scene.size()));
         Put(field, 0x648, Address(sceneData));
@@ -259,7 +259,7 @@ int main() {
         void* noAccess = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS);
         Check(noAccess != nullptr, "allocate guarded page");
         if (noAccess) {
-            Put(fixture.image, 0xC60E08, reinterpret_cast<uintptr_t>(noAccess));
+            Put(fixture.image, 0xC61318, reinterpret_cast<uintptr_t>(noAccess));
             fixture.Run(chest.row);
             Check(fixture.callerStack == before, "unreadable scene rejected");
             VirtualFree(noAccess, 0, MEM_RELEASE);

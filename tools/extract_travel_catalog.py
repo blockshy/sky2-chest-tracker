@@ -6,7 +6,6 @@
 from pathlib import Path
 import argparse
 from collections import Counter
-import hashlib
 import json
 import math
 import re
@@ -14,9 +13,9 @@ import struct
 
 from localized_game_names import (FOREST_PLACE, FOREST_TARGET, LANGUAGES, cpp_array,
                                   load_language_resources, unique_place_name)
+from game_version import assert_supported_game
 
 
-EXE_SHA256 = "d8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf"
 # 原生构造器的 ASCII 分派表确认了以下位值，不能把字母序或单独的 E 位猜作全表规则。
 SPOT_FLAGS = {"A": 1, "N": 2, "F": 4, "E": 8, "T": 16, "L": 32, "P": 64, "R": 128}
 REGIONS = {1: "洛连特地区", 2: "柏斯地区", 3: "卢安地区", 4: "蔡斯地区",
@@ -229,8 +228,7 @@ def write_localized_travel(rows: list[dict], resources: dict, output: Path) -> N
 
 def extract(game: Path, output: Path) -> None:
     """只允许已核对的 EXE 构建，避免新资源布局被误认为已经完成运行时适配。"""
-    if hashlib.sha256((game / "sora_2nd.exe").read_bytes()).hexdigest() != EXE_SHA256:
-        raise ValueError("EXE 版本不匹配，停止生成传送目录")
+    assert_supported_game(game)
     resources = load_language_resources(game)
     parsed = {language: parse_travel_table(resources[language].travel) for language in LANGUAGES}
     localized = build_localized_travel(resources, parsed)

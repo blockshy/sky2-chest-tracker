@@ -15,6 +15,7 @@ include(CTest)
 # 显式登记头文件，防止中文 MSVC 的包含文件输出解析异常导致复用陈旧对象。
 # 发布脚本另执行 clean-first；上游依赖固定到已记录的提交。
 set(TRACKER_LOCAL_HEADERS
+    native/game_version.h
     native/core.h native/progress.h native/tracker.h native/log.h native/runtime_files.h native/controller_logic.h native/input_bridge.h native/ui_scale.h
     native/localization.h native/localized_names.h native/game_language.h native/ui_text.h
     native/exploration.h native/exploration_logic.h native/travel_refresh.h native/travel_menu.h
@@ -42,7 +43,7 @@ endif()
 set_source_files_properties(
     native/tracker.cpp native/runtime_files_win.cpp native/overlay.cpp native/game_language.cpp native/input_bridge.cpp native/xinput_proxy.cpp native/plugin_entry.cpp native/exploration.cpp
     native/revisit.cpp native/revisit_native.cpp native/revisit_event_guard.cpp native/revisit_forest.cpp
-    native/revisit_journal_win.cpp tests/revisit_journal_io_tests.cpp tests/revisit_tests.cpp tests/revisit_catalog_tests.cpp
+    native/revisit_journal.cpp native/revisit_journal_win.cpp tests/revisit_journal_io_tests.cpp tests/revisit_tests.cpp tests/revisit_catalog_tests.cpp
     tests/revisit_event_guard_tests.cpp tests/revisit_event_guard_abi_tests.cpp tests/revisit_native_abi_tests.cpp
     tests/revisit_forest_tests.cpp tests/revisit_forest_abi_tests.cpp
     tests/core_tests.cpp tests/runtime_files_tests.cpp tests/runtime_files_io_tests.cpp tests/controller_tests.cpp tests/ui_scale_tests.cpp tests/exploration_tests.cpp tests/travel_refresh_tests.cpp

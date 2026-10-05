@@ -6,7 +6,16 @@
 白名单识别文件；旧收据只用于清理自己的旧记录，绝不能授权未知 DLL。全部计划
 先只读核验，再经 ShouldProcess 和互斥锁执行；每次写入/删除前重新核对内容。
 #>
-$script:Sky2SupportedExeHash = 'd8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf'
+# 源码工作区和离线发行包均读取原生权威头；发行包携带原文件副本，禁止在
+# 安装器内另写当前 EXE 指纹，以免清单已经升级而预检仍停留在上一游戏版本。
+if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'game_version.h') -PathType Leaf) {
+    $script:Sky2GameVersion = & (Join-Path $PSScriptRoot 'Get-GameVersion.ps1') -HeaderPath (Join-Path $PSScriptRoot 'game_version.h')
+} else {
+    $script:Sky2GameVersion = & (Join-Path (Split-Path $PSScriptRoot -Parent) 'tools/Get-GameVersion.ps1')
+}
+$script:Sky2SupportedExeHash = $script:Sky2GameVersion.ExeSha256
+# 历史白名单只用于确认旧文件归属；安装目标仍严格要求当前支持的唯一 EXE。
+$script:Sky2HistoricalExeHashes = @($script:Sky2SupportedExeHash, $script:Sky2GameVersion.PreviousExeSha256)
 $script:Sky2Loader974Hash = '031a3e5576d91dce1e438d36b9a3d462c7334ab4791990a8ff1e3ddc0e132daf'
 
 function Assert-Sky2PlainPath {
@@ -145,7 +154,7 @@ function Get-Sky2CleanupPlan {
             $binaryHash = $record.sha256
             if ($layout.Type -eq 'standalone-proxy') { $binaryHash = $record.dll_sha256 }
             $valid = $record.product -ceq $layout.Product -and -not [string]::IsNullOrWhiteSpace($record.version) -and $binaryHash -match '^[0-9a-fA-F]{64}$' -and (Test-Sky2KnownHash $Package $layout.Type $layout.Binary $binaryHash)
-            if ($record.exe_sha256 -and $record.exe_sha256 -ne $script:Sky2SupportedExeHash) { $valid = $false }
+            if ($record.exe_sha256 -and $record.exe_sha256 -notin $script:Sky2HistoricalExeHashes) { $valid = $false }
             if ($layout.Type -ne 'standalone-proxy') { $valid = $valid -and $record.schema -eq 1 -and $record.type -ceq $layout.Type -and $record.path -ceq $layout.Binary }
             if ($valid) { $plan += [PSCustomObject]@{ Target=$receiptPath; Hash=$receiptHash } }
         } catch { Write-Warning "无法确认旧记录归属，保留：$receiptPath" }
@@ -161,7 +170,7 @@ function Assert-Sky2ReturnRecord {
     $bytes = [IO.File]::ReadAllBytes($Path)
     if ($bytes.Length -ne 144 -or [Text.Encoding]::ASCII.GetString($bytes,0,8) -cne 'SKY2RET1' -or
         [BitConverter]::ToUInt32($bytes,8) -ne 1 -or [BitConverter]::ToUInt32($bytes,12) -ne 144 -or
-        [BitConverter]::ToString($bytes,16,32).Replace('-','').ToLowerInvariant() -ne $script:Sky2SupportedExeHash) {
+        [BitConverter]::ToString($bytes,16,32).Replace('-','').ToLowerInvariant() -notin $script:Sky2HistoricalExeHashes) {
         throw "旧返程数据格式无法确认，原文件保留：$Path"
     }
     [uint32]$crc = [uint32]::MaxValue
@@ -204,6 +213,8 @@ function Get-Sky2MigrationPlan {
         $source = Join-Path $old $relative
         $hash = Get-Sky2FileHash $source
         if (-not $hash) { continue }
+        # 旧版记录只迁移位置，绝不重写游戏指纹。运行时仍按当前版本校验，
+        # 因此历史记录保留可恢复的原始证据，但不会被冒充成新版可执行返程。
         if ($relative -ne 'tracker.log') { Assert-Sky2ReturnRecord $source }
         $target = Join-Path $new $relative
         $destinationHash = Get-Sky2FileHash $target

@@ -1,5 +1,7 @@
 // 探索辅助：仅调整原生地图显示和运行时传送菜单；绝不批量写入存档／剧情旗标。
-// 地址、结构和调用约定仅适用于已验证完整 SHA-256 的当前游戏构建。
+// 地址、结构和调用约定仅适用于已验证完整 SHA-256 的游戏 1.4.0.0（Steam build 25721473）。
+// 已逐指令核对原生 alpha、显示构建及调用点：对象字段和寄存器分配保持不变；
+// 所有 RVA 按实际调用目标重新定位，不能将任意新版 EXE 哈希加入后直接沿用旧地址。
 #include "exploration.h"
 #include "revisit_native.h"
 #include "exploration_logic.h"
@@ -141,10 +143,10 @@ static bool CommitNativeTravelVisibility(uintptr_t manager, const NativeTravelSn
 }
 
 extern "C" bool Sky2BeforeBuildTravel(uintptr_t manager, uintptr_t caller) noexcept {
-    // 初始化调用0x29EE92没有先运行MapJumpState，不能沿用其中可能过期的登记结果。
+    // 1.4.0.0 初始化调用 0x29F4D2 没有先运行 MapJumpState，不能沿用过期登记结果。
     // 只接受已核对的三处原生调用，或完整实时刷新在同线程同步Build期间授予的许可。
-    const bool afterStateScript = caller == g_explorationBase + 0x3DAA88 ||
-        caller == g_explorationBase + 0x3DB001 || caller == g_explorationBase + 0x3DB3AA;
+    const bool afterStateScript = caller == g_explorationBase + 0x3DB2D8 ||
+        caller == g_explorationBase + 0x3DB851 || caller == g_explorationBase + 0x3DBBFA;
     if (!afterStateScript && !g_travelExplicitBuild) return false;
     // 全传送清单只观察游戏已经执行完成的规则，不为探测目的重跑有副作用的脚本。
     // 即使玩家关闭“未到访传送点”的地图补显开关，清单仍需准确读取原生禁用状态。
@@ -208,7 +210,7 @@ extern "C" bool Sky2BeforeBuildTravel(uintptr_t manager, uintptr_t caller) noexc
 // 精确限定直接分块调用：递归处理子节点时沿用原生 alpha，不再次查询区块或扩大处理范围。
 extern "C" float Sky2MapAlpha(void*, uintptr_t map, uintptr_t node, float alpha,
                               uintptr_t caller, uintptr_t chunk) noexcept {
-    if (!g_mapReveal.load(std::memory_order_relaxed) || caller != g_explorationBase + 0x3F139D)
+    if (!g_mapReveal.load(std::memory_order_relaxed) || caller != g_explorationBase + 0x3F1BED)
         return alpha;
     uintptr_t chunks = 0, chunkNode = 0;
     uint64_t count = 0;
@@ -230,6 +232,8 @@ extern "C" float Sky2MapAlpha(void*, uintptr_t map, uintptr_t node, float alpha,
 void InstallExploration(uintptr_t gameBase) noexcept {
     g_explorationBase = gameBase;
     // 同时校验函数入口与唯一外部调用点的参数装载，避免覆盖其他 Mod 或错误复用偏移。
+    // 新版两个位置均移动 0x850，因此 call 的相对位移 D3 EA FF FF 保持原值；
+    // XMM3 仍为 floorAlpha * chunkAlpha，R9 仍为 0x50 字节步长的当前区块。
     const unsigned char mapEntry[] = {
         0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xEC,0x40,0x41,0x83,0x78,0x60,0x02,
         0x48,0x8B,0xFA,0x0F,0x29,0x74,0x24,0x30,0x48,0x8B,0xF1,0x0F,0x28,0xF3
@@ -238,8 +242,8 @@ void InstallExploration(uintptr_t gameBase) noexcept {
         0x49,0x8B,0x16,0x49,0x8B,0xCF,0x4D,0x8B,0x41,0x28,0xF3,0x0F,0x10,0x9A,0xF8,0,0,0,
         0xF3,0x41,0x0F,0x59,0x59,0x38,0xE8,0xD3,0xEA,0xFF,0xFF,0x49,0x83,0xC1,0x50
     };
-    auto target = reinterpret_cast<void*>(gameBase + 0x3EFE70);
-    if (Matches(gameBase + 0x3EFE70, mapEntry) && Matches(gameBase + 0x3F1380, mapCall) &&
+    auto target = reinterpret_cast<void*>(gameBase + 0x3F06C0);
+    if (Matches(gameBase + 0x3F06C0, mapEntry) && Matches(gameBase + 0x3F1BD0, mapCall) &&
         MH_CreateHook(target, reinterpret_cast<void*>(&Sky2MapAlphaShim), &Sky2NextMapAlpha) == MH_OK) {
         if (MH_EnableHook(target) == MH_OK) g_mapAvailable.store(true);
         else MH_RemoveHook(target);

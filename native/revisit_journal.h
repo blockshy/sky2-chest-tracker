@@ -25,6 +25,8 @@ bool DecodeRevisitRecord(const uint8_t* bytes, size_t size, RevisitReturnRecord&
 enum class RevisitRecordRead { Missing, Valid, Invalid, IoError };
 // 所有写入使用同目录独立临时文件，FlushFileBuffers 成功后原子替换。
 // 发现已有未知/损坏记录时拒绝覆盖；清除/归档也不由此接口执行。
+// 主文件和历史目录按受支持 Steam build 命名，例如 revisit-return-25721473.dat
+// 与 revisit-history-25721473。旧无后缀记录及其它构建记录原样保留，不执行、不迁移。
 RevisitRecordRead ReadRevisitRecordFile(const std::wstring& folder, RevisitReturnRecord& record) noexcept;
 bool WriteRevisitRecordFile(const std::wstring& folder, const RevisitReturnRecord& record) noexcept;
 // 历次出发点分别保存为不可覆盖的记录，避免开始另一趟回访后丢失旧自动存档的返程点。

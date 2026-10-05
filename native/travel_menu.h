@@ -1,6 +1,8 @@
 // 传送菜单的即时刷新适配层。此文件只在 exploration.cpp 的 tracker 命名空间内包含。
 // 所有游戏函数均由原生地图输入更新线程调用；渲染/输入线程只提交 TravelRefreshState 请求。
-// 这里的偏移及 ABI 仅适用于主模块已经核对完整 SHA-256 的游戏版本。
+// 这里的偏移及 ABI 仅适用于主模块已经核对完整 SHA-256 的游戏 1.4.0.0。
+// 逐函数指令对照确认运行时对象字段和原生筛选流程不变；全局地址通过 RIP 引用核对，
+// 四种列表／回调虚表通过 RTTI 类型身份分别定位，数据段不得套用代码的平移量。
 #pragma once
 
 struct NativeTravelApi {
@@ -129,13 +131,13 @@ static bool ReadTravelTable(uintptr_t file, uintptr_t buffer, uintptr_t headers,
 static bool ReadTravelTables(NativeTravelTables& tables) noexcept {
     uintptr_t owner = 0, holder = 0, file = 0, buffer = 0, headers = 0, sceneRoot = 0, scene = 0;
     uint32_t sceneType = 0;
-    if (!Read(g_explorationBase + 0xC5D778, owner) || owner < 0x10000 ||
+    if (!Read(g_explorationBase + 0xC5DC88, owner) || owner < 0x10000 ||
         !Read(owner + 0xF0, holder) || holder < 0x10000 || !Read(holder + 8, file) || file < 0x10000 ||
         !Read(file + 0x10, buffer) || buffer < 0x10000 ||
         !Read(file + 0x20, headers) || headers < 0x10000 ||
         !ReadTravelTable(file, buffer, headers, 0x28, 0x38, tables.areas) ||
         !ReadTravelTable(file, buffer, headers, 0x2C, 0x98, tables.spots) ||
-        !Read(g_explorationBase + 0xC60E08, sceneRoot) || sceneRoot < 0x10000 ||
+        !Read(g_explorationBase + 0xC61318, sceneRoot) || sceneRoot < 0x10000 ||
         !Read(sceneRoot + 0x648, scene) || (scene && !Read(scene + 0x98, sceneType))) return false;
     tables.specialScene = scene && sceneType == 6;
     return true;
@@ -175,12 +177,12 @@ static TravelCandidateState InspectTravelCandidates(const TravelMenuContext& con
             !FindNativeTravelRow(identity.type ? tables.spots : tables.areas,
                                   identity.id, identity.type == 1, row)) return TravelCandidateState::Invalid;
         if (identity.type == 1) {
-            // 3DF330 的主列表先按场景/区域聚合标志筛选，再排除表中 bit3 隐藏项；
+            // 3DFB80 的主列表先按场景/区域聚合标志筛选，再排除表中 bit3 隐藏项；
             // 不能仅因“某个入口真实到访”就断言该入口一定进入主列表。
             const bool admitted = tables.specialScene ? (row.flags & 0x80) != 0 :
                 row.area == 0 || (displayFlags & 4) != 0;
             if (admitted && !(row.flags & 8)) ++mainCount;
-            // 3DE790 子列表只按静态表 areaID 过滤。它对找不到ID的项直接解引用空
+            // 3DEFE0 子列表只按静态表 areaID 过滤。它对找不到ID的项直接解引用空
             // 指针，因此必须验证所有 type=1 项有静态记录，而不只是当前区域的项。
             if (context.area && row.area == context.area) ++areaCount;
         } else if (!tables.specialScene || (row.flags & 8)) {
@@ -196,11 +198,11 @@ static bool ReadTravelList(uintptr_t object, uintptr_t menu, bool areaList,
                            TravelListView& result) noexcept {
     uintptr_t vtable = 0, owner = 0, callback = 0, callbackTable = 0, callbackCode = 0, callbackOwner = 0;
     if (object < 0x10000 || !Read(object, vtable) ||
-        vtable != g_explorationBase + (areaList ? 0xB0DC28 : 0xB0DC88) ||
+        vtable != g_explorationBase + (areaList ? 0xB0DCF0 : 0xB0DC90) ||
         !Read(object + 0xF8, owner) || owner != menu || !Read(object + 0x138, callback) ||
-        !Read(callback, callbackTable) || callbackTable != g_explorationBase + 0xB0DB48 ||
+        !Read(callback, callbackTable) || callbackTable != g_explorationBase + 0xB0DC20 ||
         !Read(callback + 8, callbackCode) ||
-        callbackCode != g_explorationBase + (areaList ? 0x3EB210 : 0x3EB2D0) ||
+        callbackCode != g_explorationBase + (areaList ? 0x3EBA60 : 0x3EBB20) ||
         !Read(callback + 0x10, callbackOwner) || callbackOwner != menu) return false;
     result.object = object;
     if (!Read(object + 0x38, result.items) || !Read(object + 0x40, result.count) ||
@@ -211,7 +213,7 @@ static bool ReadTravelList(uintptr_t object, uintptr_t menu, bool areaList,
 static bool ListDisplay(const TravelListView& list, uint64_t index, uintptr_t& display) noexcept {
     uintptr_t item = 0, vtable = 0;
     return index < list.count && Read(list.items + index * 8, item) && Read(item, vtable) &&
-        vtable == g_explorationBase + 0xB0DCF8 && Read(item + 0x28, display);
+        vtable == g_explorationBase + 0xB0DD60 && Read(item + 0x28, display);
 }
 static bool ListIdentity(const TravelListView& list, const TravelDisplayRange& range,
                          TravelDisplayIdentity& identity) noexcept {
@@ -238,7 +240,7 @@ static bool ReadTravelMenu(uintptr_t menu, TravelMenuContext& context) noexcept 
         !Read(context.manager + 0xF8, context.region) || context.region < 1 || context.region > 9 ||
         !Read(context.manager + 0x104, context.scale) || !std::isfinite(context.scale) ||
         context.scale < 0.001f || context.scale > 100.0f ||
-        !Read(g_explorationBase + 0xC60E58, context.savedata) || context.savedata < 0x10000) return false;
+        !Read(g_explorationBase + 0xC61368, context.savedata) || context.savedata < 0x10000) return false;
     context.state = frames[context.depth * 3];
     // 仅接受正常浏览栈：3；3→4；3→5；3→4→5。确认、加载、退出及切图一律延期。
     if (frames[0] != 3 || frames[1] != 3 || context.state < 3 || context.state > 5 ||
@@ -296,7 +298,7 @@ static bool RunTravelScript(const TravelMenuContext& context) noexcept {
     const uintptr_t frame = context.menu + 0xB8 + static_cast<uintptr_t>(context.depth) * 12;
     return Read(context.manager + 0x28, reverse) && reverse == context.menu &&
         Read(context.menu + 8, manager) && manager == context.manager &&
-        Read(g_explorationBase + 0xC60E58, savedata) && savedata == context.savedata &&
+        Read(g_explorationBase + 0xC61368, savedata) && savedata == context.savedata &&
         Read(context.manager + 0xF8, region) && region == context.region &&
         Read(context.menu + 0xE8, depth) && depth == context.depth &&
         Read(frame, current) && current == context.state && Read(frame + 4, next) && next == context.state &&
@@ -415,7 +417,7 @@ static bool RequestNativeMapClose(uintptr_t menu) noexcept {
         !Read(menu + 0x18, owner) || owner != menu || !Read(menu + 0xF8, callback) ||
         !Read(menu + 0xB8 + static_cast<uintptr_t>(depth) * 12, current) || current < 3 || current > 5 ||
         !WriteTravel(menu + 0x190, zero) || !WriteTravel(menu + 0x198, zero)) return false;
-    // 与原生3E48A0..3E48C3相同：保留原退出请求通知，再提交 next=17。
+    // 与原生3E50F0..3E5113相同：保留原退出请求通知，再提交 next=17。
     if (callback) reinterpret_cast<void (*)(uintptr_t, int32_t, int32_t)>(callback)(owner, current, closeState);
     return WriteTravel(menu + 0xBC + static_cast<uintptr_t>(depth) * 12, closeState);
 }
@@ -503,20 +505,20 @@ static bool InstallTravelRefresh(uintptr_t base) noexcept {
     const unsigned char spots[] = {0x48,0x8B,0xC4,0x48,0x89,0x58,0x18,0x48,0x89,0x68,0x20,0x56,0x57,0x41,0x54,0x41};
     const unsigned char areas[] = {0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x6C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48};
     const unsigned char close[] = {0x40,0x53,0x48,0x83,0xEC,0x30,0x48,0x63,0x81,0xEC,0,0,0,0x48,0x8B,0xD9};
-    if (!Matches(base+0x4CC460, script) || !Matches(base+0x3D4A70, display) ||
-        !Matches(base+0x3DF330, listBuild) || !Matches(base+0x3DE790, listBuild) ||
-        !Matches(base+0x525DD0, listClear) || !Matches(base+0x5261B0, listSelect) ||
-        !Matches(base+0x3EB210, areaCallback) || !Matches(base+0x3EB2D0, spotCallback) ||
-        !Matches(base+0x3E4650, browse) || !Matches(base+0x3E54B0, spots) || !Matches(base+0x3E5BB0, areas) ||
-        !Matches(base+0x3E86B0, close)) return false;
-    g_travelApi = {reinterpret_cast<NativeTravelApi::Execute>(base+0x4CC460),
-        reinterpret_cast<NativeTravelApi::Unary>(base+0x3D4A70), reinterpret_cast<NativeTravelApi::Unary>(base+0x525DD0),
-        reinterpret_cast<NativeTravelApi::Unary>(base+0x3DF330), reinterpret_cast<NativeTravelApi::Unary>(base+0x3DE790),
-        reinterpret_cast<NativeTravelApi::Select>(base+0x5261B0), reinterpret_cast<NativeTravelApi::Unary>(base+0x3EB2D0),
-        reinterpret_cast<NativeTravelApi::Unary>(base+0x3EB210)};
+    if (!Matches(base+0x4CCCE0, script) || !Matches(base+0x3D52C0, display) ||
+        !Matches(base+0x3DFB80, listBuild) || !Matches(base+0x3DEFE0, listBuild) ||
+        !Matches(base+0x526650, listClear) || !Matches(base+0x526A30, listSelect) ||
+        !Matches(base+0x3EBA60, areaCallback) || !Matches(base+0x3EBB20, spotCallback) ||
+        !Matches(base+0x3E4EA0, browse) || !Matches(base+0x3E5D00, spots) || !Matches(base+0x3E6400, areas) ||
+        !Matches(base+0x3E8F00, close)) return false;
+    g_travelApi = {reinterpret_cast<NativeTravelApi::Execute>(base+0x4CCCE0),
+        reinterpret_cast<NativeTravelApi::Unary>(base+0x3D52C0), reinterpret_cast<NativeTravelApi::Unary>(base+0x526650),
+        reinterpret_cast<NativeTravelApi::Unary>(base+0x3DFB80), reinterpret_cast<NativeTravelApi::Unary>(base+0x3DEFE0),
+        reinterpret_cast<NativeTravelApi::Select>(base+0x526A30), reinterpret_cast<NativeTravelApi::Unary>(base+0x3EBB20),
+        reinterpret_cast<NativeTravelApi::Unary>(base+0x3EBA60)};
     // Build 入口也纳入同一组：显式刷新与普通重新开图均经过统一的最终状态评估。
-    void* targets[] = {reinterpret_cast<void*>(base+0x3E4650), reinterpret_cast<void*>(base+0x3E54B0),
-        reinterpret_cast<void*>(base+0x3E5BB0), reinterpret_cast<void*>(base+0x3D4A70)};
+    void* targets[] = {reinterpret_cast<void*>(base+0x3E4EA0), reinterpret_cast<void*>(base+0x3E5D00),
+        reinterpret_cast<void*>(base+0x3E6400), reinterpret_cast<void*>(base+0x3D52C0)};
     void* shims[] = {reinterpret_cast<void*>(&Sky2MapBrowseShim), reinterpret_cast<void*>(&Sky2SpotListShim),
         reinterpret_cast<void*>(&Sky2AreaListShim), reinterpret_cast<void*>(&Sky2BuildTravelShim)};
     void** originals[] = {&Sky2NextMapBrowse, &Sky2NextSpotList, &Sky2NextAreaList, &Sky2NextBuildTravel};

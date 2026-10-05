@@ -19,15 +19,17 @@ $projectRoot = Split-Path $PSScriptRoot -Parent
 # 脚本目录在进入脚本正文后才用于补全默认路径，确保 Windows PowerShell 5.1 也可运行。
 if (-not $BuildDirectory) { $BuildDirectory = Join-Path $projectRoot 'build-release' }
 if (-not $DependencyDirectory) { $DependencyDirectory = Join-Path $projectRoot '.deps' }
+# 在下载依赖或访问编译器前完成版本预检。版本与原生 RVA 的绑定由共用头维护，
+# 不能因为用户重新生成了目录就将未知游戏版本加入运行时支持范围。
+$gameVersion = & (Join-Path $PSScriptRoot 'Get-GameVersion.ps1')
+$gameRoot = (Resolve-Path -LiteralPath $GamePath).Path
+if ((Get-FileHash -LiteralPath (Join-Path $gameRoot 'sora_2nd.exe') -Algorithm SHA256).Hash -ne $gameVersion.ExeSha256) {
+    throw "游戏版本不匹配，仅支持 $($gameVersion.FileVersion) (Steam build $($gameVersion.SteamBuildId))，停止目录生成和构建。"
+}
 foreach ($command in @('cl', 'cmake', 'ctest', 'nmake')) { Get-Command $command -ErrorAction Stop | Out-Null }
 # 向 CMake 提供绝对路径，兼容工具链位于含空格目录时 NMake 自动查找失败的环境。
 $makeExecutable = (Get-Command nmake -ErrorAction Stop).Source
 $pythonCommand = (Get-Command $PythonExecutable -ErrorAction Stop).Source
-$gameRoot = (Resolve-Path -LiteralPath $GamePath).Path
-$expected = 'd8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf'
-if ((Get-FileHash -LiteralPath (Join-Path $gameRoot 'sora_2nd.exe')).Hash -ne $expected) {
-    throw '游戏版本不匹配，停止目录生成和构建。'
-}
 & (Join-Path $PSScriptRoot 'Setup-Dependencies.ps1') -Destination $DependencyDirectory
 $dependencyRoot = (Resolve-Path -LiteralPath $DependencyDirectory).Path
 $catalog = Join-Path $projectRoot 'data/generated'

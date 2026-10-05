@@ -3,7 +3,7 @@ import json
 import os
 import stat
 import unittest
-from installer_fixture_support import InstallerFixture, PWSH, PS51, PAYLOADS, OLD, FOREIGN, LAYOUT, digest
+from installer_fixture_support import InstallerFixture, PWSH, PS51, PAYLOADS, OLD, FOREIGN, LAYOUT, digest, EXE_HASH, PREVIOUS_EXE_HASH
 
 
 @unittest.skipUnless(os.name == 'nt' and PWSH, '需要 Windows PowerShell 环境')
@@ -66,6 +66,41 @@ class StandaloneSafety(InstallerFixture):
         self.assertFalse(receipt.exists())
         self.assertFalse((self.game / 'Sky2ChestTracker/LICENSE').exists())
         self.assertEqual((self.game / 'Sky2ChestTracker/README.md').read_bytes(), FOREIGN)
+
+    def test_previous_game_receipt_cleanup_does_not_block_current_update(self):
+        """官方更新后仍识别已发布 DLL 和旧 EXE 收据，不能把历史产品信任一并作废。"""
+        self.manual(self.kind, old=True)
+        receipt = self.receipt(self.kind, exe_sha256=PREVIOUS_EXE_HASH)
+        self.invoke(self.kind)
+        self.assertFalse(receipt.exists())
+        self.assertEqual((self.game / 'xinput1_4.dll').read_bytes(), PAYLOADS[self.kind])
+
+    def test_uninstall_known_old_binary_does_not_require_matching_game(self):
+        """游戏再次更新或旧版 Mod 已失效时，卸载仍只按已知 DLL 内容确认归属。"""
+        self.manual(self.kind, old=True)
+        self.invoke(self.kind, 'Uninstall', flags=('-UseRealExeHash',))
+        self.assertFalse((self.game / 'xinput1_4.dll').exists())
+
+    def test_previous_package_can_uninstall_after_game_update(self):
+        """隔离构造旧版配置和清单；新版 EXE 不应阻止旧发行包安全卸载已知文件。"""
+        package = self.packages[self.kind]
+        header = package / 'installer/game_version.h'
+        header.write_text(header.read_text(encoding='utf-8').replace(EXE_HASH, PREVIOUS_EXE_HASH), encoding='utf-8')
+        manifest = package / 'installer/manifest.json'
+        data = json.loads(manifest.read_text())
+        data['exe_sha256'] = PREVIOUS_EXE_HASH
+        self.write_json(manifest, data)
+        self.manual(self.kind, old=True)
+        self.invoke(self.kind, 'Uninstall')
+        self.assertFalse((self.game / 'xinput1_4.dll').exists())
+
+    def test_previous_game_manifest_cannot_install_as_current_package(self):
+        """仅篡改新包的清单为旧版本仍应被拒绝，历史迁移信任不会放宽安装预检。"""
+        manifest = self.packages[self.kind] / 'installer/manifest.json'
+        data = json.loads(manifest.read_text())
+        data['exe_sha256'] = PREVIOUS_EXE_HASH
+        self.write_json(manifest, data)
+        self.refused(self.kind, message='安装包')
 
     def test_unrecognized_dynamic_receipt_is_preserved(self):
         self.manual(self.kind)
