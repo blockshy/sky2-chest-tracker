@@ -9,6 +9,8 @@
 #include <cassert>
 #include <cstdio>
 #include <filesystem>
+#include <cstring>
+#include <cwchar>
 #include "standalone_ui/hotkeys.h"
 namespace sample {
 uint64_t now = 1000;
@@ -20,6 +22,66 @@ ULONGLONG WINAPI Now() { return now; }
 HWND WINAPI Foreground() { return foreground; }
 SHORT WINAPI Key(int key) { return key >= 0 && key < 256 ? keys[key] : 0; }
 DWORD WINAPI State(DWORD, XINPUT_STATE* output) { output->Gamepad = pad; return ERROR_SUCCESS; }
+// 不创建桌面窗口，以两个不同 DPI/位置的 HWND 模型执行正式坐标转换和合作链。
+// 所有系统副作用均在本 fixture 内，测试不会移动玩家光标或影响窗口焦点。
+struct Window {
+    HANDLE next = nullptr;
+    LONG_PTR procedure = 0;
+    LONG originX = 0, originY = 0;
+    HANDLE dpi = reinterpret_cast<HANDLE>(uintptr_t{1});
+    bool visible = true;
+    DWORD owner = GetCurrentProcessId();
+    const wchar_t* className = L"GameWindow";
+    RECT area{0, 0, 1280, 720};
+};
+Window windows[3]{};
+HANDLE threadDpi = reinterpret_cast<HANDLE>(uintptr_t{3});
+POINT cursor{100, 200};
+bool cursorReadable = true, conversionWorks = true, subclassWorks = true;
+unsigned callbacks = 0, originalCalls = 0, forwardedOld = 0;
+size_t WindowIndex(HWND window) { return reinterpret_cast<uintptr_t>(window); }
+BOOL WINAPI WindowExists(HWND window) { return WindowIndex(window) > 0 && WindowIndex(window) < std::size(windows); }
+BOOL WINAPI WindowVisible(HWND window) { return WindowExists(window) && windows[WindowIndex(window)].visible; }
+DWORD WINAPI WindowProcess(HWND window, LPDWORD owner) { *owner = windows[WindowIndex(window)].owner; return 1; }
+int WINAPI WindowClass(HWND window, LPWSTR text, int count) {
+    wcsncpy_s(text, static_cast<size_t>(count), windows[WindowIndex(window)].className, _TRUNCATE);
+    return static_cast<int>(std::wcslen(text));
+}
+BOOL WINAPI ClientRect(HWND window, LPRECT area) { *area = windows[WindowIndex(window)].area; return TRUE; }
+HANDLE WINAPI Property(HWND window, LPCWSTR) { return windows[WindowIndex(window)].next; }
+BOOL WINAPI SetProperty(HWND window, LPCWSTR, HANDLE value) { windows[WindowIndex(window)].next = value; return TRUE; }
+HANDLE WINAPI RemoveProperty(HWND window, LPCWSTR) { auto& next = windows[WindowIndex(window)].next; const auto result = next; next = nullptr; return result; }
+LONG_PTR WINAPI WindowLong(HWND window, int) { return windows[WindowIndex(window)].procedure; }
+LONG_PTR WINAPI SetWindowLong(HWND window, int, LONG_PTR value) {
+    if (!subclassWorks) { SetLastError(ERROR_ACCESS_DENIED); return 0; }
+    auto& procedure = windows[WindowIndex(window)].procedure;
+    const auto before = procedure; procedure = value; return before;
+}
+LRESULT CALLBACK Original(HWND, UINT, WPARAM, LPARAM) { ++originalCalls; return 77; }
+LRESULT WINAPI Forward(WNDPROC procedure, HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (window != foreground) ++forwardedOld;
+    return procedure(window, message, wparam, lparam);
+}
+LRESULT WINAPI Default(HWND, UINT, WPARAM, LPARAM) { return 88; }
+void Message(HWND, UINT, WPARAM, LPARAM) noexcept { ++callbacks; }
+HMODULE WINAPI Module(LPCWSTR) { return reinterpret_cast<HMODULE>(uintptr_t{1}); }
+HANDLE WINAPI WindowDpi(HWND window) { return windows[WindowIndex(window)].dpi; }
+HANDLE WINAPI ThreadDpi(HANDLE next) { const auto before = threadDpi; threadDpi = next; return before; }
+FARPROC WINAPI Procedure(HMODULE, LPCSTR name) {
+    if (!std::strcmp(name, "GetWindowDpiAwarenessContext")) return reinterpret_cast<FARPROC>(&WindowDpi);
+    if (!std::strcmp(name, "SetThreadDpiAwarenessContext")) return reinterpret_cast<FARPROC>(&ThreadDpi);
+    return nullptr;
+}
+LONG CoordinateScale() { return static_cast<LONG>(reinterpret_cast<uintptr_t>(threadDpi)); }
+BOOL WINAPI Cursor(POINT* point) {
+    if (!cursorReadable) return FALSE;
+    point->x = cursor.x / CoordinateScale(); point->y = cursor.y / CoordinateScale(); return TRUE;
+}
+BOOL WINAPI ToClient(HWND window, POINT* point) {
+    if (!conversionWorks) return FALSE;
+    point->x -= windows[WindowIndex(window)].originX / CoordinateScale();
+    point->y -= windows[WindowIndex(window)].originY / CoordinateScale(); return TRUE;
+}
 }
 namespace sky2solo {
 // 只替换系统采样；动态绑定读取、匹配、版本与磁盘提交仍使用生产组件。
@@ -38,11 +100,43 @@ HotkeyKeyboardState ReadFixtureHotkeyKeyboardState() noexcept {
 #define GetForegroundWindow sample::Foreground
 #define GetAsyncKeyState sample::Key
 #define ReadHotkeyKeyboardState ReadFixtureHotkeyKeyboardState
+#define GetModuleHandleW sample::Module
+#define GetProcAddress sample::Procedure
+#define GetCursorPos sample::Cursor
+#define ScreenToClient sample::ToClient
+#define IsWindow sample::WindowExists
+#define IsWindowVisible sample::WindowVisible
+#define GetWindowThreadProcessId sample::WindowProcess
+#define GetClassNameW sample::WindowClass
+#define GetClientRect sample::ClientRect
+#define GetPropW sample::Property
+#define SetPropW sample::SetProperty
+#define RemovePropW sample::RemoveProperty
+#define GetWindowLongPtrW sample::WindowLong
+#define SetWindowLongPtrW sample::SetWindowLong
+#define CallWindowProcW sample::Forward
+#define DefWindowProcW sample::Default
 #include "../native/input_bridge.cpp"
 #undef GetTickCount64
 #undef GetForegroundWindow
 #undef GetAsyncKeyState
 #undef ReadHotkeyKeyboardState
+#undef GetModuleHandleW
+#undef GetProcAddress
+#undef GetCursorPos
+#undef ScreenToClient
+#undef IsWindow
+#undef IsWindowVisible
+#undef GetWindowThreadProcessId
+#undef GetClassNameW
+#undef GetClientRect
+#undef GetPropW
+#undef SetPropW
+#undef RemovePropW
+#undef GetWindowLongPtrW
+#undef SetWindowLongPtrW
+#undef CallWindowProcW
+#undef DefWindowProcW
 namespace tracker {
 HMODULE g_module = nullptr;
 std::atomic<bool> g_enabled{true}, g_panel{false};
@@ -57,7 +151,25 @@ int main() {
     assert(fs::create_directory(config));
     assert(InitializeStandaloneHotkeys(config.wstring()));
     nextState = &sample::State; nextAsync = &sample::Key;
-    inputWindow.store(sample::foreground); ready.store(true); SetInputFrameHealth(true);
+    sample::windows[1].procedure = reinterpret_cast<LONG_PTR>(&sample::Original);
+    sample::windows[2].procedure = reinterpret_cast<LONG_PTR>(&sample::Original);
+    assert(AttachInputWindow(sample::foreground, &sample::Message));
+    ready.store(true); SetInputFrameHealth(true);
+    POINT pointer{};
+    assert(ReadInputMousePosition(sample::foreground, pointer) && pointer.x == 100 && pointer.y == 200);
+    assert(sample::threadDpi == reinterpret_cast<HANDLE>(uintptr_t{3}));
+    // 移到左上方显示器，屏幕原点和 DPI 同时改变；客户区仍应精确命中同一按钮。
+    sample::windows[1].originX = -1920; sample::windows[1].originY = -1080;
+    sample::windows[1].dpi = reinterpret_cast<HANDLE>(uintptr_t{2});
+    sample::cursor = {-1720, -680};
+    assert(ReadInputMousePosition(sample::foreground, pointer) && pointer.x == 100 && pointer.y == 200);
+    assert(sample::threadDpi == reinterpret_cast<HANDLE>(uintptr_t{3}));
+    sample::cursorReadable = false; pointer = {10, 20};
+    assert(!ReadInputMousePosition(sample::foreground, pointer) && pointer.x == 10 && pointer.y == 20);
+    assert(sample::threadDpi == reinterpret_cast<HANDLE>(uintptr_t{3}));
+    sample::cursorReadable = true; sample::conversionWorks = false;
+    assert(!ReadInputMousePosition(sample::foreground, pointer) && pointer.x == 10 && pointer.y == 20);
+    sample::conversionWorks = true;
     PumpInputKeyboard();
     sample::keys[VK_F7] = -32768; PumpInputKeyboard();
     assert(TakeInputActions() == TogglePanel);
@@ -102,8 +214,39 @@ int main() {
     sample::keys[VK_F10] = 0; sample::keys[VK_CONTROL] = 0; PumpInputKeyboard();
     g_panel.store(true); SynchronizeInputPanel();
     assert(InputPanelInteractive() && sky2solo::InputOwner() == 1);
+    controller.store(true);
+    NotifyInputMousePosition(sample::foreground, {100, 200});
+    assert(controller.load()); // 第一份位置只是基线，不能抢走刚使用的手柄身份。
+    NotifyInputMousePosition(sample::foreground, {100, 200}); assert(controller.load());
+    NotifyInputMousePosition(sample::foreground, {101, 200}); assert(!controller.load());
+    controller.store(true); ResetInput();
+    NotifyInputMousePosition(sample::foreground, {300, 400}); assert(controller.load());
+    NotifyInputMousePosition(sample::foreground, {301, 400}); assert(!controller.load());
+    PumpInputKeyboard(); // 开窗后的新输入世代必须先确认所有实体键已释放。
+    // 固定底栏不参与黄色内容导航，显示模式绑定在自己的窗口内仍能切换。
+    sample::keys[VK_F6] = -32768; PumpInputKeyboard(); assert(TakeInputActions() == ToggleMode);
+    sample::keys[VK_F6] = 0; PumpInputKeyboard();
+    SetInputModeShortcutEditing(true);
+    sample::keys[VK_F6] = -32768; PumpInputKeyboard(); assert(TakeInputActions() == 0);
+    SetInputModeShortcutEditing(false);
+    PumpInputKeyboard(); assert(TakeInputActions() == 0); // 关掉编辑弹出层时仍按住键，不能补触发。
+    sample::keys[VK_F6] = 0; PumpInputKeyboard();
+    sample::keys[VK_F6] = -32768; PumpInputKeyboard(); assert(TakeInputActions() == ToggleMode);
+    sample::keys[VK_F6] = 0; PumpInputKeyboard();
+    sample::keys[VK_CONTROL] = -32768; sample::keys[VK_F6] = -32768; PumpInputKeyboard();
+    assert(TakeInputActions() == 0); // 窗口内并未放开地图等其他业务键。
+    sample::keys[VK_CONTROL] = 0; sample::keys[VK_F6] = 0; PumpInputKeyboard();
     XINPUT_STATE state{};
     XINPUT_GAMEPAD navigation{};
+    sample::pad = {}; FilteredGetState(0, &state);
+    sample::pad.wButtons = kView | XINPUT_GAMEPAD_X; FilteredGetState(0, &state);
+    assert(TakeInputActions() == ToggleMode && state.Gamepad.wButtons == 0);
+    sample::pad = {}; FilteredGetState(0, &state);
+    SetInputModeShortcutEditing(true);
+    sample::pad.wButtons = kView | XINPUT_GAMEPAD_X; FilteredGetState(0, &state);
+    assert(TakeInputActions() == 0);
+    SetInputModeShortcutEditing(false);
+    FilteredGetState(0, &state); assert(TakeInputActions() == 0);
     sample::pad = {}; FilteredGetState(0, &state);
     sample::pad.wButtons = XINPUT_GAMEPAD_A; FilteredGetState(0, &state);
     assert(state.Gamepad.wButtons == 0 && ReadInputPad(navigation) && navigation.wButtons == XINPUT_GAMEPAD_A);
@@ -211,6 +354,51 @@ int main() {
     assert(TakeInputActions() == 0 && FilteredAsyncKey('K') == -32768);
     sample::keys['K'] = 0; PumpInputKeyboard(); other.Release();
     g_panel.store(true); SynchronizeInputPanel(); assert(InputPanelInteractive());
+    // 字母改绑在自己窗口内生效；文本编辑保护仍阻止它，并在退出后等待真正松开。
+    PumpInputKeyboard();
+    sample::keys['K'] = -32768; PumpInputKeyboard(); assert(TakeInputActions() == ToggleMode);
+    SetInputModeShortcutEditing(true); PumpInputKeyboard(); assert(TakeInputActions() == 0);
+    sample::keys['K'] = 0; PumpInputKeyboard();
+    sample::keys['K'] = -32768; PumpInputKeyboard(); assert(TakeInputActions() == 0);
+    SetInputModeShortcutEditing(false); PumpInputKeyboard(); assert(TakeInputActions() == 0);
+    sample::keys['K'] = 0; PumpInputKeyboard();
+    // 换 HWND 失败保留旧输入身份和旧链；成功后旧 HWND 必须只透传，不能吞输入。
+    const auto firstWindow = sample::foreground;
+    const auto secondWindow = reinterpret_cast<HWND>(uintptr_t{2});
+    sample::subclassWorks = false;
+    assert(!AttachInputWindow(secondWindow, &sample::Message));
+    assert(inputWindow.load() == firstWindow && sample::windows[2].next == nullptr);
+    sample::subclassWorks = true;
+    assert(AttachInputWindow(secondWindow, &sample::Message));
+    sample::foreground = secondWindow;
+    // 新 HWND 资格判断直接执行正式 helper，拒绝仍在显示的旧主窗、不同进程、
+    // 不同窗口类、小型辅助窗、后台窗；仅真正替代主窗的交换链可以接管。
+    assert(!sky2window::IsReplacementWindowEligible(firstWindow, secondWindow, L"GameWindow"));
+    sample::windows[1].visible = false;
+    assert(sky2window::IsReplacementWindowEligible(firstWindow, secondWindow, L"GameWindow"));
+    sample::windows[2].owner = GetCurrentProcessId() + 1;
+    assert(!sky2window::IsReplacementWindowEligible(firstWindow, secondWindow, L"GameWindow"));
+    sample::windows[2].owner = GetCurrentProcessId(); sample::windows[2].className = L"VideoWindow";
+    assert(!sky2window::IsReplacementWindowEligible(firstWindow, secondWindow, L"GameWindow"));
+    sample::windows[2].className = L"GameWindow"; sample::windows[2].area.right = 64;
+    assert(!sky2window::IsReplacementWindowEligible(firstWindow, secondWindow, L"GameWindow"));
+    sample::windows[2].area.right = 1280; sample::foreground = firstWindow;
+    assert(!sky2window::IsReplacementWindowEligible(firstWindow, secondWindow, L"GameWindow"));
+    sample::foreground = secondWindow;
+    const auto beforeCallbacks = sample::callbacks;
+    assert(ObserveWindow(firstWindow, WM_KEYDOWN, 'Z', 0) == 77);
+    assert(sample::callbacks == beforeCallbacks && sample::forwardedOld == 1);
+    SynchronizeInputPanel(); assert(InputPanelInteractive());
+    controller.store(true);
+    NotifyInputMousePosition(secondWindow, {500, 600}); assert(controller.load());
+    NotifyInputMousePosition(firstWindow, {501, 600}); assert(controller.load());
+    NotifyInputMousePosition(secondWindow, {502, 600}); assert(controller.load()); // 无关旧窗采样使基线失效。
+    NotifyInputMousePosition(secondWindow, {503, 600}); assert(!controller.load());
+    assert(ObserveWindow(secondWindow, WM_LBUTTONDOWN, 0, 0) == 0);
+    assert(sample::callbacks == beforeCallbacks + 1);
+    ObserveWindow(secondWindow, WM_LBUTTONUP, 0, 0);
+    ObserveWindow(firstWindow, WM_NCDESTROY, 0, 0);
+    assert(sample::windows[1].next == nullptr && inputWindow.load() == secondWindow);
     sample::now += 501;
     assert(!InputPanelInteractive() && sky2solo::InputOwner() == 0 && g_panel.load());
     sample::pad.wButtons = XINPUT_GAMEPAD_A; FilteredGetState(0, &state);

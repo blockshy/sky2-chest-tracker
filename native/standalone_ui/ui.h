@@ -27,6 +27,10 @@ struct WindowSpec {
     // 切侧栏时同步撤销旧页确认，之后才绘制新页；不得直接执行游戏写入。
     void (*changed)(void*, int) = nullptr;
     int language = 0; // 0 简中、1 繁中、2 日、3 英、4 德、5 法、6 西、7 韩。
+    // 可选侧栏底区位于导航列表之外。测量回调按实际内容宽度与字体返回高度，
+    // 绘制回调只接受鼠标，不占用 Main 的黄色焦点；未设置时沿用原有侧栏布局。
+    float (*measureAsideFooter)(void*, float width, float scale) = nullptr;
+    void (*asideFooter)(void*, const Sky2Frame&, int) = nullptr;
 };
 const Sky2UiApi* UiApi();
 void ConfigureTheme();

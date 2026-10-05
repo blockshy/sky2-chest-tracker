@@ -18,13 +18,16 @@
 namespace fixture {
 std::string click;
 std::vector<std::string> controls;
+std::vector<std::string> cards;
 tracker::Counts counts;
 tracker::ExplorationStatus exploration;
 tracker::RevisitReturnStatus returned;
 tracker::RevisitNativeContext context;
 tracker::RevisitNativeStatus status;
+tracker::RevisitMapPreparationPhase preparation = tracker::RevisitMapPreparationPhase::Idle;
 bool targetAllowed = true;
 int submitted = 0, cancelled = 0;
+int preparationRequests = 0;
 int contextReads = 0;
 uint32_t lastTarget = 0;
 float listHeight = 0;
@@ -47,7 +50,7 @@ int32_t Input(const char*, const char*, char*, uint32_t) { return 0; }
 // 布局替身不模拟 ImGui，只检查实际页面是否正确结束卡片/列，以及折叠说明后
 // 必需操作仍然存在。尺寸和绘制效果由共享 WARP 截图夹具检验。
 void Section(const char*, const char*) {}
-void BeginCard(const char*) { ++cardDepth; }
+void BeginCard(const char* id) { cards.emplace_back(id); ++cardDepth; }
 void EndCard() { assert(cardDepth > 0); --cardDepth; }
 int32_t Columns(const char*, float) { ++columnDepth; return layoutColumns; }
 void EndColumns() { assert(columnDepth > 0); --columnDepth; }
@@ -85,7 +88,11 @@ bool RevisitContextAllowed(const RevisitNativeContext& context) noexcept { retur
 bool RevisitRecoveryRequired(const RevisitNativeContext&) noexcept { return false; }
 RevisitNativeContext ReadRevisitNativeContext() noexcept { ++fixture::contextReads; return fixture::context; }
 RevisitNativeStatus ReadRevisitNativeStatus() noexcept { return fixture::status; }
-void CancelRevisitNativeTravel() noexcept { ++fixture::cancelled; }
+RevisitMapPreparationPhase ReadRevisitMapPreparation() noexcept { return fixture::preparation; }
+bool QueueRevisitNativeMapPreparation(const RevisitNativeContext&) noexcept {
+    ++fixture::preparationRequests; fixture::preparation = RevisitMapPreparationPhase::Queued; return true;
+}
+void CancelRevisitNativeTravel() noexcept { ++fixture::cancelled; fixture::preparation = RevisitMapPreparationPhase::Idle; }
 bool RevisitTargetAllowed(uint32_t, const RevisitNativeContext&) noexcept { return fixture::targetAllowed; }
 RevisitReturnStatus ReadRevisitReturnStatus(const RevisitNativeContext&) noexcept {
     auto result = fixture::returned; result.storageReady = true; return result;
@@ -118,7 +125,7 @@ int main() {
     fixture::counts.valid = true;
     Sky2Frame frame{sizeof(Sky2Frame), 1920, 1080, 1, 1000, 1, 1, 1, 0};
     const auto draw = [&](int tab, const char* control = "") {
-        ++frame.time_ms; fixture::requestedPage = tab; fixture::click = control; fixture::controls.clear();
+        ++frame.time_ms; fixture::requestedPage = tab; fixture::click = control; fixture::controls.clear(); fixture::cards.clear();
         TickPanel(&frame); const int before = fixture::contextReads;
         fixture::tabBarCalls = 0;
         frame.header_drawn = 0; DrawPanelHeader(&frame);
@@ -143,6 +150,25 @@ int main() {
     draw(2); assert(StandalonePageIndex() == 1); // 组内非法 Tab 不可越界到设置。
     StandaloneChoosePage(2); draw(0); assert(StandalonePageIndex() == 2);
     draw(1); assert(StandalonePageIndex() == 2);
+    // 地图准备是独立的显式动作，不能在进入页面、被禁用或后台时自动提交；
+    // 准备排队期间重复点击也不能重复调用游戏入口，完成后仍要原样确认两次。
+    StandaloneChoosePage(3); fixture::context.browsing = false;
+    fixture::context.canPrepareMap = true; draw(-1); assert(fixture::preparationRequests == 0);
+    draw(-1, "travel.prepare_map"); assert(fixture::preparationRequests == 1 && fixture::submitted == 0);
+    draw(-1, "travel.prepare_map"); assert(fixture::preparationRequests == 1);
+    draw(-1, "travel.confirm"); assert(fixture::submitted == 0);
+    StandaloneChoosePage(4); assert(fixture::preparation == RevisitMapPreparationPhase::Idle);
+    frame.foreground = 0; draw(-1, "travel.prepare_map"); assert(fixture::preparationRequests == 1);
+    frame.foreground = 1; fixture::context.canPrepareMap = false;
+    draw(-1, "travel.prepare_map"); assert(fixture::preparationRequests == 1);
+    fixture::context.canPrepareMap = true; fixture::context.busy = true;
+    draw(-1, "travel.prepare_map"); assert(fixture::preparationRequests == 1);
+    fixture::context.busy = false; draw(-1, "travel.prepare_map"); assert(fixture::preparationRequests == 2);
+    PanelVisibilityChanged(0); assert(fixture::preparation == RevisitMapPreparationPhase::Idle);
+    StandaloneChoosePage(2); draw(-1, "exploration.prepare_map");
+    assert(fixture::preparationRequests == 3 && fixture::submitted == 0);
+    draw(-1, "exploration.prepare_map"); assert(fixture::preparationRequests == 3);
+    fixture::context.browsing = true; fixture::context.canPrepareMap = false;
     // 两次确认、切页与后台均走同一正式页面；替身即使忽略 disabled 也不能提交。
     StandaloneChoosePage(3); draw(0, "travel.confirm"); assert(fixture::submitted == 0);
     draw(1, "travel.confirm"); assert(StandalonePageIndex() == 4 && fixture::submitted == 0);
@@ -168,14 +194,22 @@ int main() {
     // 概览、清单、设置仍分离；单列与双列都结束全部卡片，隐藏说明不隐藏必需操作。
     for (const int columns : {1, 2}) {
         fixture::layoutColumns = columns;
-        for (int page = 0; page < 5; ++page) { StandaloneChoosePage(page); draw(-1); }
+        for (int page = 0; page < 5; ++page) {
+            StandaloneChoosePage(page); draw(-1);
+            assert(std::find(fixture::controls.begin(), fixture::controls.end(), "chests.mode.current") == fixture::controls.end());
+            assert(std::find(fixture::controls.begin(), fixture::controls.end(), "chests.mode.inherited") == fixture::controls.end());
+        }
     }
     StandaloneChoosePage(0); draw(-1);
     assert(std::find(fixture::controls.begin(), fixture::controls.end(), "chests.markers") == fixture::controls.end());
+    assert(std::find(fixture::controls.begin(), fixture::controls.end(), "overview.list") == fixture::controls.end());
+    assert(std::find(fixture::controls.begin(), fixture::controls.end(), "overview.settings") == fixture::controls.end());
+    assert(std::find(fixture::cards.begin(), fixture::cards.end(), "overview.state") == fixture::cards.end());
     StandaloneChoosePage(2); draw(-1, "chests.markers"); assert(!g_enabled.load());
     draw(-1, "chests.markers"); assert(g_enabled.load());
-    StandaloneChoosePage(1); draw(-1, "chests.mode.inherited"); assert(g_mode.load() == Mode::Inherited);
-    draw(-1, "chests.mode.current"); assert(g_mode.load() == Mode::Current);
+    StandaloneChoosePage(1); SetStandaloneDisplayMode(Mode::Inherited); draw(-1); assert(g_mode.load() == Mode::Inherited);
+    SetStandaloneDisplayMode(Mode::Current); draw(-1); assert(g_mode.load() == Mode::Current);
+    SetStandaloneDisplayMode(static_cast<Mode>(7)); assert(g_mode.load() == Mode::Current);
     // 自适应高度来自固定 Main；无效尺寸仍有有限回退，不随内部滚动条伸缩。
     frame.scale = 1.5f; fixture::mainHeight = 400; draw(-1); const float shortList = fixture::listHeight;
     assert(shortList == 120.0f * frame.scale);

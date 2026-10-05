@@ -6,6 +6,7 @@
 #include <array>
 #include <initializer_list>
 #include <limits>
+#include <new>
 
 namespace tracker {
 // 日志输出不属于本测试范围；保留生产 helper 的真实调用路径，仅替换日志落盘端点。
@@ -344,6 +345,33 @@ void TestMap(TestResult& result, uintptr_t image, uintptr_t inaccessible) {
 
 #include "travel_menu_runtime_fixture.h"
 
+// 地图关闭时的开关意图由下一次真实 MapJumpState 后的首个 Build 使用；这不应
+// 将初始化数组或途中请求误当已完成的刷新，更不能修改剧情登记/灰态/存档旗标。
+static void TestFirstNativeBuild(TestResult& result,uintptr_t image) {
+    TravelFixture fixture(image);
+    auto reset=[&] {
+        tracker::g_travelRefresh.~TravelRefreshState();
+        new (&tracker::g_travelRefresh) tracker::TravelRefreshState();
+        fixture.Reset();tracker::g_travelAvailable=true;tracker::g_travelUnlock=false;
+    };
+    reset();tracker::g_travelRefresh.ToggleRequest();
+    fixture.VerifyCall(result,1,1,"关闭地图时的开启意图直接用于首个已验证原生构建");
+    result.Check(tracker::g_travelRefresh.ReadStatus().pending && !tracker::g_travelRefresh.ReadStatus().appliedEnabled,
+                 "构建前补显不提前谎报整个显示和选择事务已经完成");
+    reset();tracker::g_travelUnlock=true;
+    tracker::g_travelRefresh.ToggleRequest();const auto ticket=tracker::g_travelRefresh.TryBegin(true);
+    tracker::g_travelRefresh.Complete(ticket);tracker::g_travelRefresh.ToggleRequest();
+    fixture.VerifyCall(result,0,0,"关闭补显后首次重新开图不短暂恢复旧的补显状态");
+    reset();tracker::g_travelRefresh.ToggleRequest();
+    fixture.VerifyCall(result,0,0,"初始化调用尚未运行规则脚本不能消费补显意图",0x29EE97);
+    result.Check(!tracker::g_travelUnlock,"未验证初始化调用保持当前效果开关");
+    reset();tracker::g_travelRefresh.ToggleRequest();const auto active=tracker::g_travelRefresh.TryBegin(true);
+    tracker::g_travelUnlock=true;tracker::g_travelRefresh.ToggleRequest();
+    fixture.VerifyCall(result,1,1,"同步重入不得将重建途中的新关闭请求应用到半份列表");
+    result.Check(tracker::g_travelRefresh.ReadStatus().inProgress && active.Enabled(),"显式事务继续持有原始固定目标");
+    reset();
+}
+
 int main() {
     OwnMemory image(kSyntheticImageSize), inaccessible(4096, PAGE_NOACCESS);
     if (!image.Address() || !inaccessible.Address()) {
@@ -354,6 +382,7 @@ int main() {
     TestTravel(result, image.Address(), inaccessible.Address());
     TestTravelBuild(result, image.Address(), inaccessible.Address());
     TestMap(result, image.Address(), inaccessible.Address());
+    TestFirstNativeBuild(result,image.Address());
     TestTravelMenu(result, image.Address(), inaccessible.Address());
     tracker::g_explorationBase = 0;
     tracker::g_travelUnlock.store(false);

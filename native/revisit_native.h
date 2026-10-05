@@ -10,6 +10,9 @@ struct RevisitNativeContext {
     bool available = false;
     bool valid = false;
     bool browsing = false;
+    // 只表示当前游戏帧允许调用原生区域地图入口，不代表任何目的地已经获得传送许可。
+    // 准备动作只打开真实地图并让游戏计算规则；实际出发仍需玩家另外两次确认。
+    bool canPrepareMap = false;
     bool busy = true;
     bool prologueCompleted = false;
     // 仅表示本次原生更新已成功捕获并核对当前返程坐标，不是恒久传送许可。
@@ -26,6 +29,8 @@ struct RevisitNativeContext {
     uint64_t progressSignature = 0;
     // 仅在当前进程中识别打开的原生菜单；不可持久化，也不是可解引用的游戏地址。
     uint64_t browseIdentity = 0;
+    // 自由行动对象的本进程身份摘要，供短期准备请求拒绝对象替换/读档；不持久化。
+    uint64_t preparationIdentity = 0;
     // 已审核目的地的剧情准入位图；只由游戏线程按当前旗标发布，界面不得补位。
     // 独立实验构建忽略此位图作许可，但仍保持真实捕获值供诊断和默认策略使用。
     uint32_t destinationMask = 0;
@@ -68,6 +73,11 @@ void SetRevisitNativeAuthorize(RevisitNativeAuthorize callback) noexcept;
 void InstallRevisitNative(uintptr_t gameBase) noexcept;
 RevisitNativeContext ReadRevisitNativeContext() noexcept;
 RevisitNativeStatus ReadRevisitNativeStatus() noexcept;
+// 自动准备与传送请求分别记录状态：Ready 只代表地图已进入稳定浏览，绝非已出发。
+// 排队五秒内只能执行一次；失焦/页面切换可沿用 CancelRevisitNativeTravel 取消。
+enum class RevisitMapPreparationPhase : uint32_t { Idle, Queued, Opening, Ready, Rejected, Expired };
+RevisitMapPreparationPhase ReadRevisitMapPreparation() noexcept;
+bool QueueRevisitNativeMapPreparation(const RevisitNativeContext& expected) noexcept;
 bool RevisitNativeTargetAvailable(uint32_t target, const RevisitNativeContext& context) noexcept;
 bool RevisitNativeOrdinaryTargetAvailable(uint32_t target, const RevisitNativeContext& context) noexcept;
 // 默认策略按已捕获的前置规则和静态目录审核具体返程场景；实验策略只保留

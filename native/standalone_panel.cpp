@@ -4,6 +4,7 @@
 #include "standalone_ui/ui.h"
 #include "standalone_ui/input.h"
 #include "standalone_ui/hotkeys.h"
+#include "input_bridge.h"
 #include "standalone_hud.h"
 #include "panel_pages.h"
 #include "panel_state.h"
@@ -11,7 +12,9 @@
 #include "tracker.h"
 #include "ui_text.h"
 #include <array>
+#include <algorithm>
 #include <cstring>
+#include <string>
 
 namespace tracker {
 namespace {
@@ -22,6 +25,71 @@ int settingsTab = 0;
 int lastBusinessPage = 0;
 sky2solo::HotkeyEditorState hotkeyEditor;
 int GroupForPage(int page) noexcept { return page >= 3 ? 2 : (page == 2 ? 1 : 0); }
+
+const char* DisplayModeLabel() {
+    return Localize("显示模式", "表示モード", "Display mode", "顯示模式",
+        "Anzeigemodus", "Mode d’affichage", "Modo de visualización", "표시 모드");
+}
+std::string DisplayModeShortcut() {
+    // 读取当前已提交绑定，玩家改键后无需重开窗口；不展示尚未保存的编辑候选。
+    const auto keys = sky2solo::ReadHotkeys();
+    for (size_t index = 0; index < keys.count; ++index) {
+        const auto* definition = sky2solo::HotkeyInfo(index);
+        if (!definition || std::strcmp(definition->id, "chest.cycle_mode") != 0) continue;
+        const auto& binding = keys.bindings[index];
+        std::string text = binding.key ? sky2solo::HotkeyKeyboardText(binding) : "";
+        if (binding.pad) {
+            if (!text.empty()) text += " / ";
+            text += sky2solo::HotkeyPadText(binding);
+        }
+        return text;
+    }
+    return {};
+}
+float DisplayModeButtonHeight(const char* label, float width) {
+    const auto& style = ImGui::GetStyle();
+    const float wrap = std::max(1.0f, width - style.FramePadding.x * 2);
+    return std::max(ImGui::GetFrameHeight(), ImGui::CalcTextSize(label, nullptr, false, wrap).y + style.FramePadding.y * 2);
+}
+float MeasureDisplayMode(void*, float width, float) {
+    // 标题、按钮与快捷键按同一实际宽度换行。尤其在 720p 与长译名下，固定底区
+    // 必须先预留完整高度，不能依赖上一帧尺寸，否则侧栏会随内容更新来回跳动。
+    const float gap = ImGui::GetStyle().ItemSpacing.y;
+    float height = 1 + gap + ImGui::CalcTextSize(DisplayModeLabel(), nullptr, false, width).y + gap;
+    height += DisplayModeButtonHeight(UiString(UiText::ModeCurrent), width) + gap;
+    height += DisplayModeButtonHeight(UiString(UiText::InheritedColumn), width) + gap;
+    const auto shortcut = DisplayModeShortcut();
+    if (!shortcut.empty()) height += ImGui::CalcTextSize(shortcut.c_str(), nullptr, false, width).y + gap;
+    return height;
+}
+void DrawDisplayMode(void*, const Sky2Frame& frame, int) {
+    ImGui::Separator();
+    ImGui::TextWrapped("%s", DisplayModeLabel());
+    const float width = ImGui::GetContentRegionAvail().x;
+    const auto button = [&](const char* id, const char* label, Mode mode) {
+        const bool selected = g_mode.load() == mode;
+        const auto position = ImGui::GetCursorScreenPos();
+        const float height = DisplayModeButtonHeight(label, width);
+        ImGui::PushID(id);
+        // 直接使用无导航的侧栏控件，不交给 Main 的候选登记器。键盘/手柄通过
+        // 下方显示的已配置快捷键切换，黄色选中始终留在右侧具体功能内容中。
+        if (ImGui::Selectable("##mode", selected, 0, {width, height}) && frame.foreground)
+            SetStandaloneDisplayMode(mode);
+        const auto color = ImGui::GetColorU32(selected ? ImVec4(.57f, .91f, .80f, 1) : ImVec4(.62f, .70f, .79f, 1));
+        const auto padding = ImGui::GetStyle().FramePadding;
+        ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+            {position.x + padding.x, position.y + padding.y}, color, label, nullptr, std::max(1.0f, width - padding.x * 2));
+        ImGui::PopID();
+    };
+    button("chests.mode.current", UiString(UiText::ModeCurrent), Mode::Current);
+    button("chests.mode.inherited", UiString(UiText::InheritedColumn), Mode::Inherited);
+    const auto shortcut = DisplayModeShortcut();
+    if (!shortcut.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", shortcut.c_str());
+        ImGui::PopStyleColor();
+    }
+}
 
 int32_t SKY2_CALL LanguageIndex() noexcept {
     // 宝箱旧语言表是简中/日/英/繁中，公共界面按简中/繁中/日/英排列。
@@ -55,6 +123,8 @@ void DrawContent(void*, const Sky2Frame& frame, int group) {
 }
 }
 
+bool StandaloneModeShortcutEditing() noexcept { return g_panel.load() && windowState.section == 3; }
+
 bool InitializeStandalonePanel() noexcept {
     // 图形上下文重建不会重置玩家的窗口可见性、当前页签或未完成的浏览位置。
     if (PanelUiReady()) return true;
@@ -65,8 +135,8 @@ bool InitializeStandalonePanel() noexcept {
 }
 
 void ApplyStandaloneActions(uint32_t pending) noexcept {
-    // 窗口打开期间不接收旧业务组合，尤其不能让 View+A 的旧清单动作与 A 确认
-    // 同时生效。危险操作仅通过 Main 中的确认按钮进入两次确认流程。
+    // 窗口打开期间仅额外接受底栏模式键，其余业务组合保持屏蔽，避免组合键与
+    // Main 确认同时生效。危险操作仅通过 Main 中的确认按钮进入两次确认流程。
     if (pending & TogglePanel) {
         g_panel.store(!g_panel.load());
         sky2solo::ResetHotkeyEditor(hotkeyEditor);
@@ -74,7 +144,13 @@ void ApplyStandaloneActions(uint32_t pending) noexcept {
         PanelVisibilityChanged(0);
         return;
     }
-    if (g_panel.load() || sky2solo::InputOwner()) return;
+    if (g_panel.load()) {
+        // 显示模式固定在侧栏底部，因此打开窗口时仍允许其快捷键；编辑文本或
+        // 弹出候选期间由输入层拒绝，防止同一次输入同时编辑字段和切换口径。
+        if (InputModeShortcutAllowed()) ApplyPanelActions(pending & ToggleMode);
+        return;
+    }
+    if (sky2solo::InputOwner()) return;
     ApplyPanelActions(pending);
     if (g_panel.load()) windowState.resetFocus = true;
 
@@ -115,6 +191,7 @@ void DrawStandalonePanel(const Sky2Frame& inputFrame) {
         "Consulta el progreso, las ayudas de exploración y los viajes.", "수집 진행도, 탐색 보조와 이동을 관리합니다.");
     spec.sections = sections; spec.sectionCount = static_cast<int>(std::size(sections));
     spec.header = &DrawHeader; spec.draw = &DrawContent; spec.changed = &ChangeGroup;
+    spec.measureAsideFooter = &MeasureDisplayMode; spec.asideFooter = &DrawDisplayMode;
     spec.language = LanguageIndex();
     if (!sky2solo::DrawWindow(windowState, spec, frame)) {
         g_panel.store(false);

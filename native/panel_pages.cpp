@@ -131,6 +131,21 @@ bool CanSubmit(const RevisitNativeContext& context) noexcept {
         context.browsing && !context.busy && phase != RevisitNativePhase::Queued &&
         phase != RevisitNativePhase::ClosingMap && phase != RevisitNativePhase::Dispatched;
 }
+void DrawMapPreparationButton(const char* id, const char* label, const RevisitNativeContext& context) {
+    const auto preparation = ReadRevisitMapPreparation();
+    const bool preparing = preparation == RevisitMapPreparationPhase::Queued || preparation == RevisitMapPreparationPhase::Opening;
+    const bool canPrepare = active && RevisitReady() && context.available && context.valid &&
+        !context.browsing && !context.busy && context.canPrepareMap && !preparing;
+    const auto& ui = Ui();
+    ui.begin_disabled(!canPrepare);
+    // 同一准备入口供传送、返程和等待应用的显示开关使用；只打开真实地图，
+    // 不记录出发点、不选择目的地。原生线程仍逐项复核游戏允许的自由行动状态。
+    if (ui.button(id, label) && canPrepare) {
+        CancelConfirmation();
+        QueueRevisitNativeMapPreparation(context);
+    }
+    ui.end_disabled();
+}
 
 void DrawExploration() {
     const auto& ui = Ui();
@@ -147,22 +162,20 @@ void DrawExploration() {
         ToggleExploration(ExplorationFeature::TravelUnlock);
     ui.end_disabled();
     if (!status.mapAvailable || !status.travelAvailable) sky2ui::Status(ui, UiString(UiText::FeatureFailed), 2);
-    if (status.travelPending)
+    if (status.travelPending) {
         sky2ui::Status(ui, UiString(status.travelRequested ? UiText::WaitingOn : UiText::WaitingOff));
+        const auto context = ReadRevisitNativeContext();
+        if (!context.browsing) {
+            DrawMapPreparationButton("exploration.prepare_map", Localize("打开地图并应用", "マップを開いて適用", "Open map and apply", "開啟地圖並套用",
+                "Karte öffnen und anwenden", "Ouvrir la carte et appliquer", "Abrir mapa y aplicar", "지도를 열고 적용"), context);
+            ui.text_wrapped(Localize("自动打开游戏区域地图以刷新显示；不会传送或修改真实到访记录。", "地域マップを開いて表示を更新します。移動や訪問記録の変更は行いません。",
+                "Opens the game's area map to refresh the display. It does not travel or change visited records.", "自動開啟遊戲區域地圖以更新顯示；不會傳送或修改真實到訪紀錄。",
+                "Öffnet die Gebietskarte und aktualisiert die Anzeige. Keine Reise und keine Änderung der Besuchsdaten.",
+                "Ouvre la carte de zone et actualise l’affichage, sans déplacement ni modification des visites.",
+                "Abre el mapa de zona y actualiza la vista, sin viajar ni cambiar los lugares visitados.", "게임 지역 지도를 열어 표시를 갱신합니다. 이동하거나 실제 방문 기록을 바꾸지 않습니다."));
+        }
+    }
     if (sky2ui::Disclosure(ui, "exploration.help", HelpLabel())) ui.text_wrapped(UiString(UiText::FeatureNote));
-}
-
-// 口径选择属于清单和设置的共同控件；稳定 ID 不随语言或选中状态变化。
-void DrawMode() {
-    const auto& ui = Ui();
-    if (sky2ui::Tab(ui, "chests.mode.current", UiString(UiText::ModeCurrent), g_mode.load() == Mode::Current)) {
-        g_mode.store(Mode::Current); mapPage = 0;
-    }
-    ui.same_line();
-    if (sky2ui::Tab(ui, "chests.mode.inherited", UiString(UiText::InheritedColumn), g_mode.load() == Mode::Inherited)) {
-        g_mode.store(Mode::Inherited); mapPage = 0;
-    }
-    ui.spacing();
 }
 
 void DrawOverview() {
@@ -179,7 +192,6 @@ void DrawOverview() {
         for (const auto& row : counts.maps) { complete += row.Remaining(g_mode.load()) == 0; remaining += row.Remaining(g_mode.load()); }
         ui.text_wrapped(Format(UiString(UiText::MapSummary), complete, static_cast<unsigned>(counts.maps.size()), remaining).c_str());
     } else sky2ui::Status(ui, UiString(UiText::WaitingData));
-    if (ui.button("overview.list", UiString(UiText::MapList))) ChooseSection(Section::Chests);
     sky2ui::EndCard(ui);
     if (columns > 1) sky2ui::NextColumn(ui);
     sky2ui::BeginCard(ui, "overview.area");
@@ -193,11 +205,6 @@ void DrawOverview() {
     } else sky2ui::Status(ui, UiString(counts.valid ? UiText::OpenAreaMap : UiText::WaitingData));
     sky2ui::EndCard(ui);
     sky2ui::EndColumns(ui);
-    sky2ui::BeginCard(ui, "overview.state");
-    sky2ui::Status(ui, g_enabled.load() ? MarkersLabel() : UiString(UiText::Paused), g_enabled.load() ? 1 : 2);
-    ui.text_wrapped(Format(UiString(UiText::ModeLabel), UiString(g_mode.load() == Mode::Current ? UiText::ModeCurrent : UiText::ModeInherited)).c_str());
-    if (ui.button("overview.settings", SettingsLabel())) ChooseSection(Section::Settings);
-    sky2ui::EndCard(ui);
 }
 
 void DrawSettings() {
@@ -209,7 +216,6 @@ void DrawSettings() {
     if (ui.checkbox("chests.markers", MarkersLabel(), &markers)) g_enabled.store(markers != 0);
     int32_t hudValue = hud ? 1 : 0;
     if (ui.checkbox("chests.hud", HudLabel(), &hudValue)) hud = hudValue != 0;
-    DrawMode();
     if (sky2ui::Disclosure(ui, "tracking.help", HelpLabel())) ui.text_wrapped(UiString(UiText::MarkerLegend));
     sky2ui::EndCard(ui);
     if (columns > 1) sky2ui::NextColumn(ui);
@@ -223,7 +229,6 @@ void DrawChestList(const Sky2Frame& frame) {
     const auto& ui = Ui();
     sky2ui::BeginCard(ui, "chests.catalog");
     sky2ui::Section(ui, UiString(UiText::MapTitle));
-    DrawMode();
     int32_t missing = missingOnly ? 1 : 0;
     if (ui.checkbox("chests.missing", UiString(UiText::OnlyMissing), &missing)) {
         missingOnly = missing != 0;
@@ -268,7 +273,25 @@ const char* TravelMessage(const RevisitNativeContext& context, const RevisitNati
     if (status.phase == RevisitNativePhase::Dispatched) return UiString(UiText::TravelDispatched);
     if (!context.valid) return UiString(UiText::WaitingScene);
     if (!RevisitContextAllowed(context)) return UiString(UiText::SceneUnsupported);
-    if (!context.browsing || context.busy) return UiString(UiText::OpenTravelMap);
+    if (!context.browsing || context.busy) {
+        const auto preparation = ReadRevisitMapPreparation();
+        if (preparation == RevisitMapPreparationPhase::Queued || preparation == RevisitMapPreparationPhase::Opening)
+            return Localize("正在打开游戏区域地图，请稍候；准备完成后仍需确认目的地。", "地域マップを開いています。完了後に移動先を確認してください。",
+                "Opening the game's area map. Confirm the destination once it is ready.", "正在開啟遊戲區域地圖，請稍候；準備完成後仍需確認目的地。",
+                "Die Gebietskarte wird geöffnet. Bestätige danach das Reiseziel.", "Ouverture de la carte de zone. Confirmez ensuite la destination.",
+                "Abriendo el mapa de zona. Confirma el destino cuando esté listo.", "게임 지역 지도를 여는 중입니다. 준비되면 목적지를 확인하세요.");
+        if (preparation == RevisitMapPreparationPhase::Rejected || preparation == RevisitMapPreparationPhase::Expired)
+            return Localize("地图准备未完成。请回到可自由行动的场景后重试，也可手动打开区域地图。", "マップの準備が完了しませんでした。自由行動中に再試行するか、地域マップを手動で開いてください。",
+                "Map preparation did not finish. Retry during free exploration or open the area map manually.", "地圖準備未完成。請回到可自由行動的場景後重試，也可手動開啟區域地圖。",
+                "Kartenvorbereitung fehlgeschlagen. Bei freier Erkundung erneut versuchen oder die Gebietskarte selbst öffnen.",
+                "La préparation a échoué. Réessayez en exploration libre ou ouvrez la carte manuellement.",
+                "No se pudo preparar el mapa. Reintenta en exploración libre o abre el mapa manualmente.", "지도 준비를 완료하지 못했습니다. 자유 탐색 중 다시 시도하거나 지역 지도를 직접 여세요.");
+        return Localize("点击「准备传送 / 准备返程」自动打开游戏区域地图，再确认两次。", "「移動を準備 / 帰還を準備」で地域マップを開き、その後 2 回確認してください。",
+            "Use Prepare travel / Prepare return to open the area map, then confirm twice.", "點選「準備傳送 / 準備返程」自動開啟遊戲區域地圖，再確認兩次。",
+            "Mit „Reise vorbereiten / Rückkehr vorbereiten“ die Gebietskarte öffnen, dann zweimal bestätigen.",
+            "Utilisez Préparer le voyage / le retour pour ouvrir la carte, puis confirmez deux fois.",
+            "Usa Preparar viaje / regreso para abrir el mapa y confirma dos veces.", "이동 준비 / 귀환 준비로 지역 지도를 연 다음 두 번 확인하세요.");
+    }
     if (!RevisitTargetAllowed(target, context)) {
         if (target == kRevisitReturnTarget)
             return UiString(returned.hasRecord ? (revisit_policy::kUnrestricted ? UiText::ReturnInvalid : UiText::ReturnStoryBlocked) : UiText::ReturnMissing);
@@ -375,6 +398,13 @@ void DrawTravel(const Sky2Frame& frame) {
     const bool allowed = selectedVisible && active && CanSubmit(context) && RevisitTargetAllowed(destination.id, context);
     const bool armed = confirmation.Armed(destination.id, frame.time_ms);
     ui.spacing();
+    if (!context.browsing) {
+        const char* label = returnView ?
+            Localize("准备返程", "帰還を準備", "Prepare return", "準備返程", "Rückkehr vorbereiten", "Préparer le retour", "Preparar regreso", "귀환 준비") :
+            Localize("准备传送", "移動を準備", "Prepare travel", "準備傳送", "Reise vorbereiten", "Préparer le voyage", "Preparar viaje", "이동 준비");
+        // 准备成功后仍保留原有两次独立确认，不能把打开地图当作出发许可。
+        DrawMapPreparationButton("travel.prepare_map", label, context);
+    }
     sky2ui::Status(ui, selectedVisible ? TravelMessage(context, ReadRevisitNativeStatus(), returned, destination.id, frame.time_ms) :
         Localize("请先选中搜索结果中的地点，或清空搜索", "検索結果の場所を選ぶか検索を解除してください",
             "Select a search result or clear the search first", "請先選中搜尋結果中的地點，或清空搜尋",
@@ -385,7 +415,7 @@ void DrawTravel(const Sky2Frame& frame) {
     // 控件不启用长按重复；第一次只进入八秒确认，第二次独立激活才排队。
     const char* confirmLabel = armed ?
         Localize("再次确认", "もう一度確認", "Confirm again", "再次確認", "Erneut bestätigen", "Confirmer à nouveau", "Confirmar de nuevo", "다시 확인") :
-        Localize("准备行程", "移動を準備", "Prepare trip", "準備行程", "Reise vorbereiten", "Préparer le trajet", "Preparar viaje", "이동 준비");
+        Localize("确认目的地", "移動先を確認", "Confirm destination", "確認目的地", "Reiseziel bestätigen", "Confirmer la destination", "Confirmar destino", "목적지 확인");
     if (ui.button("travel.confirm", confirmLabel) && allowed) {
         if (confirmation.Press(destination.id, frame.time_ms, active, allowed, context)) {
             submissionRejected = !QueueRevisitTravel(destination.id, ++requestToken, context);
@@ -400,14 +430,14 @@ void DrawTravel(const Sky2Frame& frame) {
     }
     if (sky2ui::Disclosure(ui, "travel.help", HelpLabel())) {
         ui.text_wrapped(UiString(revisit_policy::kUnrestricted ? UiText::TravelOrigin : UiText::TravelStoryOrigin));
-        ui.text_wrapped(Localize("先打开游戏区域地图，再选择目的地并确认两次。返程记录在「返程」页。",
-            "ゲームの地域マップを開き、移動先を選んで 2 回確認してください。帰還記録は「帰還」にあります。",
-            "Open the game's area map, choose a destination and confirm twice. Return records are on the Return tab.",
-            "先開啟遊戲區域地圖，再選擇目的地並確認兩次。返程紀錄在「返程」頁。",
-            "Gebietskarte öffnen, ein Ziel wählen und zweimal bestätigen. Rückkehrdaten stehen unter Rückkehr.",
-            "Ouvrez la carte de zone, choisissez une destination et confirmez deux fois. Les points de retour sont dans Retour.",
-            "Abre el mapa de zona, elige un destino y confirma dos veces. Los registros están en Regreso.",
-            "게임의 지역 지도를 열고 목적지를 선택한 뒤 두 번 확인하세요. 귀환 기록은 귀환 탭에 있습니다."));
+        ui.text_wrapped(Localize("可用「准备传送 / 准备返程」自动打开区域地图，也可手动打开。准备本身不会传送，之后仍需核对目的地并确认两次。返程记录在「返程」页。",
+            "「移動を準備 / 帰還を準備」で地域マップを開けます。手動でも開けます。準備だけでは移動しません。移動先を確認して 2 回決定してください。帰還記録は「帰還」にあります。",
+            "Prepare travel / Prepare return opens the area map; manual opening also works. Preparation does not travel. Check the destination and confirm twice. Return records are on the Return tab.",
+            "可用「準備傳送 / 準備返程」自動開啟區域地圖，也可手動開啟。準備本身不會傳送，之後仍需核對目的地並確認兩次。返程紀錄在「返程」頁。",
+            "Reise vorbereiten / Rückkehr vorbereiten öffnet die Gebietskarte; manuelles Öffnen bleibt möglich. Die Vorbereitung löst keine Reise aus. Ziel prüfen und zweimal bestätigen. Rückkehrdaten stehen unter Rückkehr.",
+            "Préparer le voyage / le retour ouvre la carte ; l’ouverture manuelle reste possible. La préparation ne déplace pas le personnage. Vérifiez la destination et confirmez deux fois. Les points de retour sont dans Retour.",
+            "Preparar viaje / regreso abre el mapa; también puedes abrirlo manualmente. Preparar no te transporta. Comprueba el destino y confirma dos veces. Los registros están en Regreso.",
+            "이동 준비 / 귀환 준비로 지역 지도를 열거나 직접 열 수 있습니다. 준비만으로 이동하지 않습니다. 목적지를 확인하고 두 번 확인하세요. 귀환 기록은 귀환 탭에 있습니다."));
     }
     sky2ui::EndCard(ui);
     if (!returnView) sky2ui::EndColumns(ui);
@@ -421,7 +451,7 @@ void ApplyPanelActions(uint32_t pending) noexcept {
     // 输入层已检查前台与窗口所有权；这里只提交既有开关或页面意图。
     // 传送目的地、返程票据与两次确认始终留在可见页面和安全游戏队列中。
     try {
-        if (pending & ToggleMode) { g_mode.store(g_mode.load() == Mode::Current ? Mode::Inherited : Mode::Current); mapPage = 0; }
+        if (pending & ToggleMode) SetStandaloneDisplayMode(g_mode.load() == Mode::Current ? Mode::Inherited : Mode::Current);
         if (pending & ToggleEnabled) g_enabled.store(!g_enabled.load());
         if (pending & ToggleMapReveal) ToggleExploration(ExplorationFeature::MapReveal);
         if (pending & ToggleTravelUnlock) ToggleExploration(ExplorationFeature::TravelUnlock);
@@ -437,6 +467,10 @@ int StandalonePageIndex() noexcept { return static_cast<int>(section); }
 const Counts& StandaloneCountsSnapshot() noexcept { return counts; }
 bool StandaloneHudVisible() noexcept { return hud; }
 void SetStandaloneHudVisible(bool value) noexcept { hud = value; }
+void SetStandaloneDisplayMode(Mode mode) noexcept {
+    if (mode != Mode::Current && mode != Mode::Inherited) return;
+    if (g_mode.exchange(mode) != mode) mapPage = 0;
+}
 void StandaloneChoosePage(int page) noexcept {
     // 不接受外壳传来的越界索引，避免未知页面被解释成可提交传送的页面。
     if (page >= static_cast<int>(Section::Overview) && page <= static_cast<int>(Section::Return))
@@ -471,7 +505,7 @@ void DrawPanelHeader(const Sky2Frame* frame) {
         // 先校验组内返回值再转换成全局页号；不能让非法值越过侧栏业务边界。
         if (selected >= 0 && selected < pageCount) nextPage = firstPage + selected;
     } else {
-        // 绘制表没有页栏扩展，继续使用原控件 ID；口径选择仍是普通功能 Tab。
+        // 绘制表没有页栏扩展，继续使用原控件 ID；这里只负责当前用途分组的页签。
         for (int index = firstPage; index < firstPage + pageCount; ++index) {
             if (index != firstPage) ui.same_line();
             if (sky2ui::Tab(ui, legacyIds[index], labels[index], previousPage == index)) nextPage = index;

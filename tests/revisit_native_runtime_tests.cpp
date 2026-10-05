@@ -47,6 +47,23 @@ tracker::RevisitReturnPoint loadedPoint{};
 uint32_t loadedFlags=0;
 bool acceptLoad=true;
 bool tripActiveAtLoad=false;
+unsigned openMapCalls=0;
+uintptr_t preparedMapAddress=0;
+bool acceptMap=true,cancelDuringMap=false,requeueDuringMap=false;
+bool preparationFocused=true;
+bool FakePreparationForeground() noexcept { return preparationFocused; }
+bool FakeNativeOpenMap(uintptr_t field,uint32_t kind,bool regionMap) {
+    ++openMapCalls;
+    Check(kind==0 && regionMap,"map preparation uses the ordinary native region-map arguments");
+    if (cancelDuringMap) tracker::CancelRevisitNativeTravel();
+    if (requeueDuringMap)
+        Check(tracker::QueueRevisitNativeMapPreparation(tracker::ReadRevisitNativeContext()),
+              "new explicit preparation can queue after cancellation without inheriting old completion");
+    if (!acceptMap) return false;
+    uintptr_t minimap=0;std::memcpy(&minimap,reinterpret_cast<const void*>(field+0x730),8);
+    std::memcpy(reinterpret_cast<void*>(minimap+0x28),&preparedMapAddress,8);
+    return true;
+}
 void FakeNativeLoad(uintptr_t field,const char* scene,const char* entry,const float* position,float yaw,uint32_t flags) {
     ++loadCalls;strcpy_s(loadedPoint.scene,scene);
     std::memcpy(loadedPoint.xyz,position,sizeof(loadedPoint.xyz));loadedPoint.yawRadians=yaw;loadedFlags=flags;
@@ -59,7 +76,11 @@ struct Fixture {
     std::array<unsigned char,0x1C00> field{};
     std::array<unsigned char,0xA0> scene{};
     std::array<unsigned char,0xF00> sceneRoot{};
-    std::array<unsigned char,0x70> player{};
+    std::array<unsigned char,0x380> player{};
+    std::array<unsigned char,0x2D40> runtime{};
+    std::array<unsigned char,0x190> environment{};
+    std::array<unsigned char,0x294> fieldState{};
+    std::array<unsigned char,0x20> inputState{};
     std::array<unsigned char,0x130> actor{};
     std::array<unsigned char,0x12000> save{};
     std::array<unsigned char,0x320> minimap{};
@@ -94,6 +115,13 @@ struct Fixture {
         tracker::publishedPointValid=tracker::arrivalPointValid=tracker::sawLoadTransition=false;
         tracker::arrivalFrames=0;tracker::nativeLoad=&FakeNativeLoad;
         tracker::ruleProof={};
+        tracker::nativeOpenMap=nullptr;tracker::preparationPhase=tracker::RevisitMapPreparationPhase::Idle;
+        tracker::preparationExpected={};tracker::preparationMenuIdentity=0;
+        tracker::preparationSerial=0;
+        tracker::preparationGameThread=0;
+        preparationFocused=true;tracker::preparationForeground=&FakePreparationForeground;
+        runtime.fill(0);environment.fill(0);fieldState.fill(0);inputState.fill(0);
+        openMapCalls=0;acceptMap=true;cancelDuringMap=false;requeueDuringMap=false;preparedMapAddress=Address(menu);
         ruleSpots={};ruleAreas={};
         loadCalls=0;loadedPoint={};loadedFlags=0;acceptLoad=true;tripActiveAtLoad=false;
         testForestGuardReady=true;
@@ -127,6 +155,21 @@ struct Fixture {
         Put(placeRows,0,uint32_t{1101000});Put(placeRows,8,reinterpret_cast<uintptr_t>(currentScene));
         Put(placeRows,0x98,uint32_t{2});
         Destination(99,6,1601100,"mp6011");
+        tracker::Sky2BeforeRevisitUpdate(Address(minimap));
+    }
+    // 只准备本测试进程里的原生布局替身；生产代码仍负责全部门槛和提交时重检。
+    void FreeExploration() {
+        tracker::nativeOpenMap=&FakeNativeOpenMap;
+        Global(0xC5D768,Address(runtime));Global(0xC60E68,Address(environment));
+        Global(0xC60E90,Address(inputState));
+        // 使用本测试已分配的大块合成 image 中的空闲范围提供共享输入标志，
+        // 不把远端进程或任何真实游戏全局作为测试依赖。
+        Global(0xC60E50,tracker::base+0x1000);Global(0x624A43,uint8_t{0});
+        Put(field,0x6A8,Address(fieldState));
+        Put(field,0xB8,int32_t{2});Put(field,0xBC,int32_t{2});Put(field,0xC0,int32_t{1});
+        Put(minimap,0x28,uintptr_t{0});Put(player,0x340,uint8_t{1});
+        // 原生地图键保持未按下，防止将实时按键采样误作地图许可而使自动准备失效。
+        Put(player,0x320,uint32_t{2});Put(player,0x20,uint8_t{0});
         tracker::Sky2BeforeRevisitUpdate(Address(minimap));
     }
     bool Queue(uint64_t token=1) { return tracker::QueueRevisitNativeTravel(99,token,tracker::ReadRevisitNativeContext()); }
@@ -202,6 +245,81 @@ struct Fixture {
         Put(placeRows,0x1F8+0x90,uint8_t{0});Put(placeRows,0x1F8+0x98,uint32_t{0});
     }
 };
+
+void TestMapPreparation(Fixture& f) {
+    using Phase=tracker::RevisitMapPreparationPhase;
+    auto queue=[] { return tracker::QueueRevisitNativeMapPreparation(tracker::ReadRevisitNativeContext()); };
+    auto tick=[&] { tracker::Sky2BeforeRevisitUpdate(Address(f.minimap)); };
+    f.Reset();f.FreeExploration();
+    Check(tracker::ReadRevisitNativeContext().canPrepareMap,"free exploration permits preparation without pressing the native map key");
+    Check(queue() && !queue() && openMapCalls==0,"render request queues one preparation without executing native functions");
+    tick();
+    Check(openMapCalls==1 && loadCalls==0 && f.MenuResult()==0 &&
+          tracker::ReadRevisitMapPreparation()==Phase::Opening,"native preparation opens map only and submits no destination");
+    tick();tick();
+    Check(openMapCalls==1 && tracker::ReadRevisitMapPreparation()==Phase::Ready &&
+          tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Idle,
+          "stable browsing completes preparation without automatically creating a travel request");
+    Check(!queue(),"already open native map is not opened again");
+    f.Reset();f.FreeExploration();Put(f.inputState,0x11,uint8_t{1});tick();
+    Check(queue(),"native compound input restriction does not reject its first condition alone");
+    f.Reset();f.FreeExploration();queue();tracker::CancelRevisitNativeTravel();tick();
+    Check(openMapCalls==0 && tracker::ReadRevisitMapPreparation()==Phase::Rejected,
+          "focus or page cancellation before commit prevents map opening");
+    f.Reset();f.FreeExploration();queue();preparationFocused=false;tick();
+    Check(openMapCalls==0 && tracker::ReadRevisitMapPreparation()==Phase::Rejected,
+          "game-thread foreground check blocks opening even when rendering is paused after focus loss");
+    f.Reset();f.FreeExploration();queue();tracker::preparationRequestedAt=GetTickCount64()-6000;tick();
+    Check(openMapCalls==0 && tracker::ReadRevisitMapPreparation()==Phase::Expired,"expired requests never execute on a later free frame");
+    f.Reset();f.FreeExploration();queue();tracker::preparationRequestedAt=GetTickCount64()-6000;
+    Check(tracker::ReadRevisitMapPreparation()==Phase::Expired,"paused game updates still expose preparation timeout");
+    f.Reset();f.FreeExploration();tracker::publishedAt=GetTickCount64()-1001;
+    Check(!queue(),"stale free-exploration snapshots cannot queue preparation");
+    f.Reset();f.FreeExploration();queue();acceptMap=false;tick();
+    Check(openMapCalls==1 && tracker::ReadRevisitMapPreparation()==Phase::Rejected && loadCalls==0,
+          "native refusal reports failure without retrying or loading a destination");
+    f.Reset();f.FreeExploration();queue();cancelDuringMap=true;tick();tick();
+    Check(openMapCalls==1 && tracker::ReadRevisitMapPreparation()==Phase::Rejected && loadCalls==0,
+          "cancellation after native open starts is not revived as a successful preparation");
+    f.Reset();f.FreeExploration();queue();cancelDuringMap=true;requeueDuringMap=true;tick();
+    Check(openMapCalls==1 && tracker::ReadRevisitMapPreparation()==Phase::Queued,
+          "old completion cannot replace a new explicit preparation queued during native opening");
+    cancelDuringMap=false;requeueDuringMap=false;tick();
+    Check(openMapCalls==1 && tracker::ReadRevisitMapPreparation()==Phase::Rejected,
+          "replacement request revalidates the already opened map instead of opening twice");
+    f.Reset();f.FreeExploration();queue();tick();Put(f.minimap,0x28,Address(f.newMenu));tick();
+    Check(tracker::ReadRevisitMapPreparation()==Phase::Rejected,"replacement menu cannot satisfy an earlier preparation");
+    f.Reset();f.FreeExploration();queue();f.save[0x100+16010/8]^=1u<<(16010%8);tick();
+    Check(openMapCalls==0 && tracker::ReadRevisitMapPreparation()==Phase::Rejected,"story context changes cancel queued preparation");
+    // 每个约束先排队再改变，以覆盖“显示可用以后才进入禁止状态”的真实竞态。
+    // 测试只检查生产函数的行为，不靠重复一份同形布尔表达式证明自己正确。
+    for (unsigned block=0;block<17;++block) {
+        f.Reset();f.FreeExploration();Check(queue(),"preparation starts from safe state before mutation");
+        switch(block) {
+        case 0: Put(f.field,0xE8,int32_t{1});break;
+        case 1: Put(f.field,0xBC,int32_t{3});break;
+        case 2: Put(f.field,0x1BC8,uint32_t{1});break;
+        case 3: Put(f.field,0x718,Address(f.menu));break;
+        case 4: Put(f.save,0x100,uint8_t{2});break;
+        case 5: Put(f.save,0x101,uint8_t{1});break;
+        case 6: Put(f.save,0x10B,uint8_t{4});break;
+        case 7: Put(f.runtime,0x2D30,uint8_t{1});break;
+        case 8: Put(f.environment,0x18E,uint8_t{1});break;
+        case 9: Put(f.player,0x340,uint8_t{0});break;
+        case 10: Put(f.player,0x320,uint32_t{0});break;
+        case 11: Put(f.player,0xB8,Address(f.actor));break;
+        case 12: Put(f.player,0x35,uint8_t{1});break;
+        case 13: Put(f.player,0x60,uintptr_t{0});break;
+        case 14: Put(f.player,0x30,uint8_t{1});break;
+        case 15: Put(f.fieldState,0x290,uint32_t{0x400});break;
+        case 16: Put(f.inputState,0x11,uint8_t{1});f.Global(0x624A43,uint8_t{1});break;
+        }
+        tick();
+        Check(openMapCalls==0 && tracker::ReadRevisitMapPreparation()==Phase::Rejected && loadCalls==0,
+              "native map restrictions are revalidated immediately before preparation");
+    }
+    f.Reset();
+}
 
 int RunUnrestricted(Fixture& f) {
     // 与普通553项回归独立运行：实验许可仅在单独编译目标里启用，不能改变
@@ -396,6 +514,7 @@ int main() {
     Fixture f;
     if(!f.image) return 2;
     f.Reset();
+    TestMapPreparation(f);
 #if SKY2_UNRESTRICTED_TRAVEL
     return RunUnrestricted(f);
 #else

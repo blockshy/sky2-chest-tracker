@@ -19,6 +19,7 @@
 #include <imgui_impl_win32.h>
 #include <mutex>
 #include <array>
+#include <cwchar>
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 namespace tracker {
 using PresentFn = HRESULT(WINAPI*)(IDXGISwapChain*, UINT, UINT);
@@ -27,6 +28,7 @@ static ImGuiContext* g_context = nullptr;
 static ID3D11Device* g_device = nullptr;
 static ID3D11DeviceContext* g_deviceContext = nullptr;
 static HWND g_window = nullptr;
+static wchar_t g_windowClass[256]{};
 // Win32 后端可能在同一线程同步递送窗口消息，因此允许本线程重入；其它
 // 线程仍串行访问本模块的 ImGui 上下文，退出回调时恢复前一个 Mod 的上下文。
 static std::recursive_mutex g_renderLock;
@@ -36,6 +38,14 @@ static void WindowMessage(HWND window, UINT message, WPARAM wparam, LPARAM lpara
         auto* previous = ImGui::GetCurrentContext();
         if (g_context && window == g_window) {
             ImGui::SetCurrentContext(g_context);
+            InputWindowDpiScope dpi(window);
+            // 切屏后的第一条消息可能直接是按下，不能让它使用旧屏幕的最后一次
+            // WM_MOUSEMOVE 坐标。先送入当前点，再送按钮，保证事件队列中的命中顺序。
+            if (InputPanelInteractive() && message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) {
+                POINT point{};
+                if (ReadInputMousePosition(window, point))
+                    ImGui::GetIO().AddMousePosEvent(static_cast<float>(point.x), static_cast<float>(point.y));
+            }
             ImGui_ImplWin32_WndProcHandler(window, message, wparam, lparam);
         }
         ImGui::SetCurrentContext(previous);
@@ -47,12 +57,14 @@ static bool InitializeGui(IDXGISwapChain* swap) {
     if (FAILED(swap->GetDesc(&description)) || !description.OutputWindow) return false;
     DWORD owner = 0;
     GetWindowThreadProcessId(description.OutputWindow, &owner);
+    InputWindowDpiScope dpi(description.OutputWindow);
     RECT area{};
-    if (owner != GetCurrentProcessId() || !GetClientRect(description.OutputWindow, &area) ||
+    if (owner != GetCurrentProcessId() || !IsWindowVisible(description.OutputWindow) || !GetClientRect(description.OutputWindow, &area) ||
         area.right < 320 || area.bottom < 240) return false;
     if (FAILED(swap->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&g_device)))) return false;
     g_device->GetImmediateContext(&g_deviceContext);
     g_window = description.OutputWindow;
+    GetClassNameW(g_window, g_windowClass, static_cast<int>(std::size(g_windowClass)));
     IMGUI_CHECKVERSION();
     g_context = ImGui::CreateContext();
     ImGui::SetCurrentContext(g_context);
@@ -84,9 +96,44 @@ static bool InitializeGui(IDXGISwapChain* swap) {
         g_deviceContext = nullptr; g_device = nullptr; g_window = nullptr;
         return false;
     }
-    AttachInputWindow(g_window, &WindowMessage);
+    if (!AttachInputWindow(g_window, &WindowMessage)) {
+        ImGui_ImplDX11_Shutdown(); ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext(g_context); g_context = nullptr;
+        g_deviceContext->Release(); g_device->Release();
+        g_deviceContext = nullptr; g_device = nullptr; g_window = nullptr;
+        return false;
+    }
     Log("D3D11 panel initialized.");
     return true;
+}
+
+static bool RefreshGuiTarget(IDXGISwapChain* swap) {
+    if (!g_context) return InitializeGui(swap);
+    DXGI_SWAP_CHAIN_DESC description{};
+    if (FAILED(swap->GetDesc(&description)) || !description.OutputWindow) return false;
+    const HWND window = description.OutputWindow;
+    if (window != g_window) {
+        // 切换显示器/全屏模式可能重新创建 HWND，但同进程也可能含视频或工具窗口。
+        // 只接受同类、可见、真正前台的新游戏窗，并要求旧窗已消失或隐藏，防止抢链。
+        if (!sky2window::IsReplacementWindowEligible(g_window, window, g_windowClass)) return false;
+    }
+    ID3D11Device* device = nullptr;
+    if (FAILED(swap->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device)))) return false;
+    const bool sameDevice = device == g_device;
+    device->Release();
+    if (window == g_window && sameDevice) return true;
+    // 旧后端保存着 HWND、设备和鼠标跟踪状态，不能仅修改 g_window。完整重建后端
+    // 同时清除按键/拖动；业务页、HUD 位置和独立窗口状态保存在上下文外，继续保留。
+    SetInputFrameHealth(false);
+    PanelVisibilityChanged(0);
+    ReleaseInputMouseButtons();
+    ImGui::SetCurrentContext(g_context);
+    ImGui_ImplDX11_Shutdown(); ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext(g_context); g_context = nullptr;
+    g_deviceContext->Release(); g_device->Release();
+    g_deviceContext = nullptr; g_device = nullptr; g_window = nullptr;
+    Log("Game display target changed; rebuilding panel window and graphics backend.");
+    return InitializeGui(swap);
 }
 
 static HRESULT WINAPI Present(IDXGISwapChain* swap, UINT interval, UINT options) {
@@ -95,14 +142,21 @@ static HRESULT WINAPI Present(IDXGISwapChain* swap, UINT interval, UINT options)
         std::lock_guard<std::recursive_mutex> guard(g_renderLock);
         ImGuiContext* previous = ImGui::GetCurrentContext();
         try {
-            const bool ready = g_context || InitializeGui(swap);
+            const auto* oldContext = g_context;
+            const bool ready = RefreshGuiTarget(swap);
+            if (previous == oldContext && oldContext != g_context) previous = nullptr;
             if (ready) {
                 DXGI_SWAP_CHAIN_DESC description{};
                 swap->GetDesc(&description);
                 if (description.OutputWindow == g_window) {
                     ImGui::SetCurrentContext(g_context);
+                    InputWindowDpiScope dpi(g_window);
                     // 读取游戏当前文本语言，而非 Windows/Steam 语言；内部节流，不改写游戏配置。
                     RefreshGameLanguage();
+                    // 本项目当前使用显式键位候选选择；弹出选择器和任何文本编辑期间
+                    // 禁止显示模式业务快捷键，避免改绑字母键时被顺带当成切换命令。
+                    SetInputModeShortcutEditing(StandaloneModeShortcutEditing() || ImGui::GetIO().WantTextInput ||
+                        ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel));
                     PumpInputKeyboard();
                     ApplyStandaloneActions(TakeInputActions());
                     SynchronizeInputPanel();
@@ -126,6 +180,17 @@ static HRESULT WINAPI Present(IDXGISwapChain* swap, UINT interval, UINT options)
                     ImGui_ImplDX11_NewFrame();
                     ImGui_ImplWin32_NewFrame();
                     auto& io = ImGui::GetIO();
+                    const bool interactive = InputPanelInteractive();
+                    if (interactive) {
+                        // 后端只在 MouseTrackedArea==0 时补采鼠标。跨屏、DPI 或原生
+                        // Raw Input 状态变化后可能不再收到对应 leave/move；逐帧校正无需
+                        // 等待下一次窗口切换，软件光标与按钮命中都使用当前客户区位置。
+                        POINT point{};
+                        if (ReadInputMousePosition(g_window, point)) {
+                            NotifyInputMousePosition(g_window, point);
+                            io.AddMousePosEvent(static_cast<float>(point.x), static_cast<float>(point.y));
+                        }
+                    }
                     // 交互坐标以游戏客户区显示像素为准；后缓冲可能使用不同渲染
                     // 分辨率，只通过 FramebufferScale 映射，避免鼠标命中位置偏移。
                     const float width = io.DisplaySize.x, height = io.DisplaySize.y;
@@ -136,12 +201,14 @@ static HRESULT WINAPI Present(IDXGISwapChain* swap, UINT interval, UINT options)
                     XINPUT_GAMEPAD pad{};
                     const bool freshPad = ReadInputPad(pad);
                     sky2solo::FeedGamepad(freshPad ? &pad : nullptr, InputPanelInteractive());
-                    io.MouseDrawCursor = InputPanelInteractive();
+                    io.MouseDrawCursor = interactive;
                     ImGui::NewFrame();
                     Sky2Frame frame{sizeof(Sky2Frame), width, height, scale, GetTickCount64(),
                         (g_panel.load() ? InputPanelInteractive() : GetForegroundWindow() == g_window) ? 1 : 0, g_panel.load() ? 1 : 0,
                         g_panel.load() ? 1 : 0, UsingController() ? 1 : 0};
                     DrawStandalonePanel(frame);
+                    SetInputModeShortcutEditing(StandaloneModeShortcutEditing() || io.WantTextInput ||
+                        ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel));
                     SynchronizeInputPanel();
                     ImGui::Render();
                     ID3D11Texture2D* buffer = nullptr;
@@ -164,7 +231,7 @@ static HRESULT WINAPI Present(IDXGISwapChain* swap, UINT interval, UINT options)
                         SetInputFrameHealth(true);
                     } else SetInputFrameHealth(false);
                 }
-            } else SetInputFrameHealth(false);
+            } else if (!g_context) SetInputFrameHealth(false);
         } catch (...) {
             SetInputFrameHealth(false);
             PanelVisibilityChanged(0);

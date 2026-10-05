@@ -47,6 +47,24 @@ bool beforeLoadPositionValid=false;
 // 正式构建由安装时绑定到已验证的 29CF90，不暴露给外部模块。
 using NativeLoad = void (*)(uintptr_t, const char*, const char*, const float*, float, uint32_t);
 NativeLoad nativeLoad = nullptr;
+// 完整区域地图入口：由游戏自己创建菜单、执行 MapJumpState 并推进 field 状态栈。
+// 不直接调用菜单构造器，不模拟按键，也不在这里提交任何目的地/加载请求。
+using NativeOpenMap = bool (*)(uintptr_t, uint32_t, bool);
+NativeOpenMap nativeOpenMap = nullptr;
+RevisitMapPreparationPhase preparationPhase = RevisitMapPreparationPhase::Idle;
+RevisitNativeContext preparationExpected{};
+ULONGLONG preparationRequestedAt = 0;
+uintptr_t preparationMenuIdentity = 0;
+uint64_t preparationSerial = 0;
+std::atomic<DWORD> preparationGameThread{0};
+bool PreparationProcessIsForeground() noexcept {
+    const HWND window=GetForegroundWindow();
+    DWORD process=0;
+    return window && GetWindowThreadProcessId(window,&process) && process==GetCurrentProcessId();
+}
+// 保持窗口平台检查与原生状态检查独立。仅内部运行时测试替换该只读检查，正式构建
+// 始终调用上面的系统 API；不因暂停 Present 而漏掉排队后立即切出游戏的取消条件。
+bool (*preparationForeground)() noexcept=&PreparationProcessIsForeground;
 ULONGLONG requestedAt = 0;
 ULONGLONG publishedAt = 0;
 // 已写入原生退出结果时，单独保留交接身份。即使状态改为过期/拒绝，也必须先
@@ -356,9 +374,54 @@ bool StableBrowse(uintptr_t menu, uintptr_t minimap, int32_t& depth, int32_t& cu
         (current != 5 || depth >= 1) && (depth != 2 || (frames[3] == 4 && frames[4] == 4));
 }
 
+// 复现原生探索输入 2D4C90/2D4D40 的地图许可，另要求 field 处于唯一自由行动层。
+// 仅凭“没有地图窗口”不能开图：战斗、对话、过场、编成菜单和原生输入限制都须拒绝。
+// 2AA5D0 会自行再次检查旗标90；这里先排除，以免受限场景产生错误音或延迟动作。
+// player+20 是原生地图键的按下采样，不是地图许可；显式准备必须在未按该键时
+// 也能执行，故不以它作为准入条件。+30 的竞争按键非零时保守让本次请求取消。
+bool CanPrepareMap(uintptr_t field, uintptr_t savedata, uintptr_t minimap,
+                   uint64_t& identity) noexcept {
+    uintptr_t player=0,actor=0,runtime=0,environment=0,fieldState=0,menu=0,camp=0,interaction=0;
+    uint32_t busy=1,controllerFlags=0,fieldFlags=0,resultKind=0;
+    int32_t depth=-1,updateDepth=-1,frames[3]{};
+    uint8_t inputFlags=0,menuFlags=0,eventFlags=0,runtimeBusy=1,special=1;
+    uint8_t controllable=0,competingMenuInput=1,restricted=1;
+    if (!nativeOpenMap || !Read(field+0xE8,depth) || depth!=0 ||
+        !Read(field+0xEC,updateDepth) || updateDepth!=depth ||
+        !ReadBytes(field+0xB8,frames,sizeof(frames)) || frames[0]!=2 || frames[1]!=2 || frames[2]<=0 ||
+        !Read(field+0x1BC8,busy) || busy || !Read(field+0x718,camp) || camp ||
+        !Read(minimap+0x28,menu) || menu || !Read(minimap+0x314,resultKind) || resultKind ||
+        !Read(savedata+0x100,inputFlags) || (inputFlags&0x52u) ||
+        !Read(savedata+0x101,menuFlags) || (menuFlags&1u) ||
+        !Read(savedata+0x10B,eventFlags) || (eventFlags&0x24u) ||
+        !Read(base+0xC5D768,runtime) || !Read(runtime+0x2D30,runtimeBusy) || runtimeBusy ||
+        !Read(base+0xC60E68,environment) || !Read(environment+0x18E,special) || special ||
+        !Read(field+0x660,player) || !Read(player+0x60,actor) || actor<0x10000 ||
+        !Read(player+0x340,controllable) || controllable!=1 ||
+        !Read(player+0x320,controllerFlags) || !(controllerFlags&2u) ||
+        !Read(player+0xB8,interaction) || interaction || !Read(player+0x35,restricted) || restricted ||
+        !Read(player+0x30,competingMenuInput) || competingMenuInput ||
+        !Read(field+0x6A8,fieldState) || !Read(fieldState+0x290,fieldFlags) || (fieldFlags&0x400u)) return false;
+    // 对应 2D540C..2D5427 的额外输入限制：仅当两项同时成立才禁止开图。
+    // 不能把第一项非零单独视为禁止，否则正常允许地图的输入模式也会被误拦截。
+    uintptr_t inputState=0;
+    uint8_t specialInput=1;
+    if (!Read(base+0xC60E90,inputState) || !Read(inputState+0x11,specialInput)) return false;
+    if (specialInput) {
+        uintptr_t sharedState=0;uint8_t restriction=1;
+        if (!Read(base+0xC60E50,sharedState) || !Read(sharedState+0x623A43,restriction) || (restriction&1u)) return false;
+    }
+    identity=14695981039346656037ull;
+    for (const uintptr_t value:{field,savedata,minimap,player,actor}) {
+        identity^=static_cast<uint64_t>(value);identity*=1099511628211ull;
+    }
+    if (!identity) identity=1;
+    return true;
+}
+
 RevisitNativeContext Capture(uintptr_t expectedMinimap = 0) noexcept {
     RevisitNativeContext result{};
-    result.available = available.load(std::memory_order_relaxed);
+    result.available = available.load(std::memory_order_acquire);
     captureIssue=CaptureIssue::None;
     diagnosticMenuState=-1;
     const auto fail=[&](CaptureIssue issue) { captureIssue=issue;return result; };
@@ -452,6 +515,8 @@ RevisitNativeContext Capture(uintptr_t expectedMinimap = 0) noexcept {
         !Read(field+0x648, sceneAgain) || sceneAgain != scene ||
         !Read(savedata+0x11100+12*4, chapterAgain) || chapterAgain != chapter) return fail(CaptureIssue::Changed);
     result.valid = result.region >= 1 && result.region <= 9 && result.chapter <= 9;
+    result.canPrepareMap=result.available && result.valid && !result.busy && !menu &&
+        CanPrepareMap(field,savedata,minimap,result.preparationIdentity);
     CaptureRules(minimap,result,currentIdentity.variant);
     return result;
 }
@@ -943,6 +1008,67 @@ bool BeforeJump(uintptr_t field, uint32_t target, uintptr_t caller) noexcept {
     Log("Revisit: handoff accepted by the original map-jump consumer.");
     return false;
 }
+
+// 本函数只从真实 minimap Update 桥执行。准备结束后绝不自动选择目的地或执行返程；
+// 玩家必须在更新后的规则下重新选择，再走既有的两次确认及原生退出消费者。
+void ProcessMapPreparation(uintptr_t minimap,const RevisitNativeContext& context) noexcept {
+    RevisitMapPreparationPhase phase{};
+    RevisitNativeContext expected{};
+    uint64_t serial=0;
+    {
+        std::lock_guard<std::mutex> lock(stateMutex);
+        phase=preparationPhase;expected=preparationExpected;serial=preparationSerial;
+        if (phase!=RevisitMapPreparationPhase::Queued && phase!=RevisitMapPreparationPhase::Opening) return;
+        if (GetTickCount64()-preparationRequestedAt>5000) {
+            preparationPhase=RevisitMapPreparationPhase::Expired;return;
+        }
+        if (!SameContext(context,expected) || context.busy || !preparationForeground()) {
+            preparationPhase=RevisitMapPreparationPhase::Rejected;return;
+        }
+    }
+    uintptr_t field=0,liveMinimap=0,menu=0;
+    if (!Read(base+0xC60E08,field) || !Read(field+0x730,liveMinimap) || liveMinimap!=minimap ||
+        !Read(minimap+0x28,menu)) {
+        std::lock_guard<std::mutex> lock(stateMutex);
+        if (preparationSerial==serial && preparationPhase==phase)
+            preparationPhase=RevisitMapPreparationPhase::Rejected;
+        return;
+    }
+    if (phase==RevisitMapPreparationPhase::Opening) {
+        std::lock_guard<std::mutex> lock(stateMutex);
+        if (preparationSerial!=serial || preparationPhase!=phase) return;
+        if (!menu || menu!=preparationMenuIdentity) preparationPhase=RevisitMapPreparationPhase::Rejected;
+        else if (context.browsing) preparationPhase=RevisitMapPreparationPhase::Ready;
+        return;
+    }
+    if (menu || !preparationForeground() || !context.canPrepareMap || !context.preparationIdentity ||
+        context.preparationIdentity!=expected.preparationIdentity) {
+        std::lock_guard<std::mutex> lock(stateMutex);
+        if (preparationSerial==serial && preparationPhase==phase)
+            preparationPhase=RevisitMapPreparationPhase::Rejected;
+        return;
+    }
+    {
+        // 这是唯一的开图提交点。此前取消一定阻止调用；此后原生已经接管开图，取消
+        // 仅终止准备状态，不强拆菜单。无论是否取消，都没有隐含的自动传送后续动作。
+        std::lock_guard<std::mutex> lock(stateMutex);
+        if (preparationSerial!=serial || preparationPhase!=RevisitMapPreparationPhase::Queued) return;
+        preparationPhase=RevisitMapPreparationPhase::Opening;
+    }
+    const bool opened=nativeOpenMap(field,0,true);
+    uintptr_t reverse=0;
+    const bool created=opened && Read(minimap+0x28,menu) && menu &&
+        Read(menu+8,reverse) && reverse==minimap;
+    {
+        std::lock_guard<std::mutex> lock(stateMutex);
+        if (preparationSerial==serial && preparationPhase==RevisitMapPreparationPhase::Opening) {
+            if (created) preparationMenuIdentity=menu;
+            else preparationPhase=RevisitMapPreparationPhase::Rejected;
+        }
+    }
+    Log(created ? "Revisit: native region map preparation requested; destination confirmation still required." :
+        "Revisit: native region map preparation rejected; no destination was submitted.");
+}
 }
 
 extern "C" void Sky2BeforeRevisitUpdate(uintptr_t minimap) noexcept {
@@ -955,6 +1081,10 @@ extern "C" void Sky2BeforeRevisitUpdate(uintptr_t minimap) noexcept {
     Publish(context,point,pointValid);
     LogNativeState(context,pointValid);
     ClearCancelledHandoff(minimap);
+    DWORD expectedThread=0;
+    const DWORD thread=GetCurrentThreadId();
+    preparationGameThread.compare_exchange_strong(expectedThread,thread);
+    if (preparationGameThread.load()==thread) ProcessMapPreparation(minimap,context);
 }
 extern "C" bool Sky2BeforeRevisitJump(uintptr_t field, uint32_t target, uintptr_t caller) noexcept {
     return BeforeJump(field,target,caller);
@@ -979,6 +1109,26 @@ RevisitNativeStatus ReadRevisitNativeStatus() noexcept {
     if (status.phase==RevisitNativePhase::Dispatched && GetTickCount64()-dispatchedAt>60000)
         status.phase=RevisitNativePhase::ArrivalUnconfirmed;
     return status;
+}
+RevisitMapPreparationPhase ReadRevisitMapPreparation() noexcept {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    if ((preparationPhase==RevisitMapPreparationPhase::Queued || preparationPhase==RevisitMapPreparationPhase::Opening) &&
+        GetTickCount64()-preparationRequestedAt>5000) preparationPhase=RevisitMapPreparationPhase::Expired;
+    return preparationPhase;
+}
+bool QueueRevisitNativeMapPreparation(const RevisitNativeContext& expected) noexcept {
+    std::lock_guard<std::mutex> lock(stateMutex);
+    if (!available.load() || !nativeOpenMap || !expected.canPrepareMap || expected.busy ||
+        !SameContext(expected,published) || !published.canPrepareMap || GetTickCount64()-publishedAt>1000 ||
+        !expected.preparationIdentity || expected.preparationIdentity!=published.preparationIdentity || dispatchArmed ||
+        status.phase==RevisitNativePhase::Queued || status.phase==RevisitNativePhase::ClosingMap ||
+        status.phase==RevisitNativePhase::Dispatched || preparationPhase==RevisitMapPreparationPhase::Queued ||
+        preparationPhase==RevisitMapPreparationPhase::Opening) return false;
+    preparationExpected=expected;preparationRequestedAt=GetTickCount64();preparationMenuIdentity=0;
+    // 每次显式请求均有独立序号。旧游戏帧返回时不能覆盖“取消后立即重试”的新请求。
+    if (++preparationSerial==0) ++preparationSerial;
+    preparationPhase=RevisitMapPreparationPhase::Queued;
+    return true;
 }
 bool RevisitNativeTargetAvailable(uint32_t target, const RevisitNativeContext& context) noexcept {
     if (!SupportedSource(context)) return false;
@@ -1089,6 +1239,8 @@ bool ReadRevisitNativeReturnPoint(const RevisitNativeContext& expected, RevisitR
 }
 void CancelRevisitNativeTravel() noexcept {
     std::lock_guard<std::mutex> lock(stateMutex);
+    if (preparationPhase==RevisitMapPreparationPhase::Queued || preparationPhase==RevisitMapPreparationPhase::Opening)
+        preparationPhase=RevisitMapPreparationPhase::Rejected;
     if (status.phase==RevisitNativePhase::Queued || status.phase==RevisitNativePhase::ClosingMap)
         status.phase=RevisitNativePhase::Rejected;
     // 退出已提交后仍保留armed身份，由更新线程撤回结果或由消费者拒绝该请求。
@@ -1217,12 +1369,23 @@ void InstallRevisitNative(uintptr_t gameBase) noexcept {
     if (MH_CreateHook(jumpTarget,reinterpret_cast<void*>(&Sky2RevisitJumpShim),&Sky2NextRevisitJump)!=MH_OK) {
         MH_RemoveHook(updateTarget); return;
     }
+    // 自动准备是可选能力。入口、原生输入调用点以及地图构造前提全部匹配后才启用；
+    // 任一校验失败只隐藏准备入口，原有手动开图传送流程继续可用。
+    const unsigned char openMap[]={0x40,0x53,0x48,0x83,0xEC,0x50,0x48,0x8B,0x05};
+    const unsigned char openCall[]={0x45,0x0F,0xB6,0xC4,0x33,0xD2,0x48,0x8B,0x0D,0xC8,0xB9,0x98,0,0xE8,0x8B,0x51,0xFD,0xFF};
+    const unsigned char createMap[]={0x40,0x53,0x55,0x56,0x57,0x41,0x54,0x41,0x56,0x41,0x57,0x48,0x81,0xEC,0xA0,0,0,0};
+    if (Matches(base+0x2AA5D0,openMap) && Matches(base+0x2D5433,openCall) && Matches(base+0x3DA920,createMap))
+        nativeOpenMap=reinterpret_cast<NativeOpenMap>(base+0x2AA5D0);
+    // 所有原生入口先绑定，再让游戏线程进入 Update 桥。available 的 release /
+    // Capture 的 acquire 另作为完整就绪发布，不能启用挂钩后再写普通函数指针。
+    nativeLoad=reinterpret_cast<NativeLoad>(base+0x29CF90);
     if (MH_EnableHook(jumpTarget)!=MH_OK || MH_EnableHook(updateTarget)!=MH_OK) {
         MH_DisableHook(updateTarget); MH_DisableHook(jumpTarget);
         MH_RemoveHook(updateTarget); MH_RemoveHook(jumpTarget); return;
     }
-    nativeLoad=reinterpret_cast<NativeLoad>(base+0x29CF90);
-    available.store(true);
+    Log(nativeOpenMap ? "Revisit: explicit native-map preparation available on safe exploration frames." :
+        "Revisit: native-map preparation signature mismatch; manual map workflow retained.");
+    available.store(true,std::memory_order_release);
     Log("Revisit: chapter 0-9 native map-result and guarded exact-position return adapter ready.");
 }
 }

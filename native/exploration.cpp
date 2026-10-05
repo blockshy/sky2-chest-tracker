@@ -146,6 +146,14 @@ extern "C" bool Sky2BeforeBuildTravel(uintptr_t manager, uintptr_t caller) noexc
     const bool afterStateScript = caller == g_explorationBase + 0x3DAA88 ||
         caller == g_explorationBase + 0x3DB001 || caller == g_explorationBase + 0x3DB3AA;
     if (!afterStateScript && !g_travelExplicitBuild) return false;
+    // 玩家在地图关闭时改变补显设置，随后由原生开图流程重算规则。首个显示构建
+    // 就应采用这次意图，避免先短暂显示旧模式再由浏览更新修正。这里只读取请求快照，
+    // 不重跑脚本、不提前宣布刷新完成；完整显示/选中项验证仍由现有刷新事务负责。
+    // 显式重建或同步重入必须沿用其固定 ticket，不能用中途的新请求改变一半列表。
+    const auto refresh=g_travelRefresh.ReadStatus();
+    if (afterStateScript && g_travelAvailable.load(std::memory_order_relaxed) &&
+        refresh.pending && !refresh.inProgress && !g_travelExplicitBuild)
+        g_travelUnlock.store(refresh.requestedEnabled,std::memory_order_relaxed);
     // 全传送清单只观察游戏已经执行完成的规则，不为探测目的重跑有副作用的脚本。
     // 即使玩家关闭“未到访传送点”的地图补显开关，清单仍需准确读取原生禁用状态。
     ObserveRevisitNativeRules(manager);

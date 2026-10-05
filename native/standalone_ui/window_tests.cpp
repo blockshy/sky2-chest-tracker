@@ -11,10 +11,18 @@ Sky2Frame frame{sizeof(Sky2Frame),1600,1000,1,1000,1,1,1,1};
 ImGuiID first=0,nextId=0,helpId=0;
 ImGuiWindow* mainWindow=nullptr;
 ImVec2 headerPosition{};
+ImVec2 asideFooterPosition{};
+ImGuiWindow* asideFooterWindow=nullptr;
+int asideClicks=0;
 int tab=0,clicks=0,changes=0;
 bool open=true,longPage=false;
 void Check(bool ok,const char* text){if(!ok){std::cerr<<text<<" nav="<<GImGui->NavId<<"\n";std::exit(1);}}
 void Header(void*,const Sky2Frame&,int){headerPosition=ImGui::GetCursorScreenPos();const char* labels[]{"Settings","List"};tab=sky2solo::UiApi()->tab_bar("tabs",labels,2,tab);}
+float MeasureAside(void*,float,float scale){return 100*scale;}
+void AsideFooter(void*,const Sky2Frame&,int){
+    asideFooterPosition=ImGui::GetCursorScreenPos();asideFooterWindow=GImGui->CurrentWindow;
+    if(ImGui::Button("Display mode",{100,35}))++asideClicks;
+}
 void Page(void*,const Sky2Frame& value,int){
     Check(value.header_drawn==1,"Main knows fixed header already drew");mainWindow=GImGui->CurrentWindow;
     auto* ui=sky2solo::UiApi();float width=0,height=0;ui->content_size(&width,&height);Check(width>100&&height>100,"Main exposes actual remaining viewport");
@@ -33,6 +41,8 @@ int main(){
     auto* context=ImGui::CreateContext();auto& io=ImGui::GetIO();io.IniFilename=nullptr;io.LogFilename=nullptr;
     ImFontConfig font;font.SizePixels=20;io.Fonts->AddFontDefault(&font);unsigned char* pixels=nullptr;int width=0,height=0;io.Fonts->GetTexDataAsRGBA32(&pixels,&width,&height);
     sky2solo::ConfigureTheme();io.BackendFlags|=ImGuiBackendFlags_HasGamepad;Draw();Draw();Draw();
+    // 可选底区从第一帧起固定在导航下方，不能加入 Main 的导航候选。
+    spec.measureAsideFooter=&MeasureAside;spec.asideFooter=&AsideFooter;Draw();Draw();
     Check(GImGui->NavId==first,"initial focus is a Main control");Key(ImGuiKey_GamepadDpadLeft);Check(GImGui->NavId==first,"left boundary never enters sidebar");
     Key(ImGuiKey_GamepadDpadDown);Check(GImGui->NavId==nextId,"disabled previous does not block next");
     Key(ImGuiKey_GamepadDpadDown);Check(GImGui->NavId==helpId,"disclosure can receive focus");
@@ -41,11 +51,17 @@ int main(){
     io.AddKeyEvent(ImGuiMod_Ctrl,true);Draw();Key(ImGuiKey_PageUp);io.AddKeyEvent(ImGuiMod_Ctrl,false);Draw();Check(tab==0,"Ctrl+PgUp switches tab");
     Key(ImGuiKey_PageUp);Check(state.section==0,"PgUp switches section");
     frame.controller=0;ImGui::SetNavCursorVisible(false);Draw();frame.controller=1;Draw();Check(GImGui->NavCursorVisible,"controller restores highlight after mouse");
-    longPage=true;state.resetFocus=true;Draw();Draw();const auto fixed=headerPosition;
+    longPage=true;state.resetFocus=true;Draw();Draw();const auto fixed=headerPosition;const auto fixedAside=asideFooterPosition;
     io.AddKeyAnalogEvent(ImGuiKey_GamepadRStickDown,true,1);for(int i=0;i<35;++i)Draw();io.AddKeyAnalogEvent(ImGuiKey_GamepadRStickDown,false,0);Draw();
     Check(mainWindow->Scroll.y>0,"right stick scrolls outer Main");Check(std::abs(headerPosition.y-fixed.y)<.1f,"Header does not scroll with Main");
+    Check(std::abs(asideFooterPosition.y-fixedAside.y)<.1f,"Aside footer does not scroll with Main");
+    Check(asideFooterWindow&&asideFooterWindow->ScrollMax.y==0,"Aside footer contents fit reserved height");
     auto* root=ImGui::FindWindowByName("SoloFixture");Check(root&&std::floor(root->ScrollMax.y)==0,"root has no hidden vertical scroll");
     frame.foreground=0;const int oldTab=tab;Key(ImGuiKey_GamepadR2);Key(ImGuiKey_GamepadFaceDown);Check(tab==oldTab&&clicks==0&&root->Active,"background panel remains visible and read-only");
+    io.AddMousePosEvent(asideFooterPosition.x+20,asideFooterPosition.y+15);Draw();io.AddMouseButtonEvent(0,true);Draw();io.AddMouseButtonEvent(0,false);Draw();
+    Check(asideClicks==0,"background Aside footer stays read-only");
+    frame.foreground=1;Draw();io.AddMouseButtonEvent(0,true);Draw();io.AddMouseButtonEvent(0,false);Draw();
+    Check(asideClicks==1,"foreground Aside footer accepts mouse clicks");
     frame.foreground=1;Draw();const auto before=state.position;
     io.AddMousePosEvent(before.x+70,before.y+25);Draw();io.AddMouseButtonEvent(0,true);Draw();
     io.AddMousePosEvent(before.x+170,before.y+85);Draw();io.AddMouseButtonEvent(0,false);Draw();

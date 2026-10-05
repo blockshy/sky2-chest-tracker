@@ -19,4 +19,7 @@ struct Counts;
 const Counts& StandaloneCountsSnapshot() noexcept;
 bool StandaloneHudVisible() noexcept;
 void SetStandaloneHudVisible(bool value) noexcept;
+enum class Mode : unsigned;
+// 模式入口统一重置清单页码，避免切换口径后停留在不存在的最后一页。
+void SetStandaloneDisplayMode(Mode mode) noexcept;
 }

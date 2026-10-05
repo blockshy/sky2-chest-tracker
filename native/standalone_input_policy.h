@@ -1,4 +1,4 @@
-// 独立交互窗口的纯输入规则：保留关闭窗口时的普通开关，窗口内只允许关闭组合。
+// 独立交互窗口的纯输入规则：窗口内仅保留关闭与显式允许的显示模式组合。
 // 此文件不访问 Win32、ImGui 或游戏对象，失焦、松键尾部和危险组合可独立回归。
 #pragma once
 #include "controller_logic.h"
@@ -21,7 +21,7 @@ class StandalonePadPolicy {
 public:
     void Reset() noexcept { *this = StandalonePadPolicy{}; }
     StandalonePadResult Update(const PadSample& raw, bool open, bool foreground, bool otherWindow = false,
-                               uint32_t requestedActions = 0) noexcept {
+                               uint32_t requestedActions = 0, bool modeShortcutAllowed = false) noexcept {
         if (!foreground) { Reset(); return {}; }
         const auto shortcut = shortcuts_.Update(raw, true);
         // View 按下期间只要任一窗口拥有输入，就把整次手势视为窗口输入。
@@ -33,7 +33,8 @@ public:
         // 动作由公共动态绑定表匹配，此层不再解释固定业务键。旧 PadFilter
         // 仅用于 View 手势、补发和按钮尾部；它计算的历史动作全部忽略。
         if (!shortcutArmed_) { shortcutArmed_ = neutral; requestedActions = 0; }
-        result.actions = open ? (requestedActions & TogglePanel) : requestedActions;
+        const uint32_t panelActions = TogglePanel | (modeShortcutAllowed ? ToggleMode : 0u);
+        result.actions = open ? (requestedActions & panelActions) : requestedActions;
         if (open && !previousOpen_) navigationArmed_ = false;
         if (!open) navigationArmed_ = false;
         else if (neutral) navigationArmed_ = true;

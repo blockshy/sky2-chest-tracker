@@ -114,7 +114,19 @@ bool DrawWindow(WindowState& state, const WindowSpec& spec, const Sky2Frame& bas
         ImGui::CalcTextSize(MoveText(spec.language),nullptr,false,availableWidth).y+ImGui::GetStyle().ItemSpacing.y*4+1;
     const float body=std::max(60*s,ImGui::GetContentRegionAvail().y-footer);
     const float aside=std::min(168*s,std::max(82*s,availableWidth*.24f));
-    ImGui::BeginChild("aside",{aside,body},ImGuiChildFlags_NavFlattened);
+    ImGui::BeginChild("aside",{aside,body},ImGuiChildFlags_NavFlattened,
+        spec.asideFooter ? ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse : 0);
+    const float asideTop = ImGui::GetCursorPosY();
+    const float asideHeight = ImGui::GetContentRegionAvail().y;
+    float asideFooterHeight = 0;
+    if(spec.asideFooter){
+        // 导航独立滚动，底区用真实字体测量后的空间。低分辨率下只收缩导航视口，
+        // 避免较长译名或 Main 滚动把模式切换挤出侧栏；无效测量采用有界回退。
+        const float measured = spec.measureAsideFooter ? spec.measureAsideFooter(spec.user,ImGui::GetContentRegionAvail().x,s) : 120*s;
+        asideFooterHeight = std::clamp(std::isfinite(measured)?measured:120*s,1.0f,std::max(1.0f,asideHeight-1));
+        const float navigationHeight = std::max(1.0f,asideHeight-asideFooterHeight-ImGui::GetStyle().ItemSpacing.y);
+        ImGui::BeginChild("navigation",{0,navigationHeight},ImGuiChildFlags_NavFlattened);
+    }
     for(int index=0;index<count;++index){
         const char* label=spec.sections&&index<spec.sectionCount?spec.sections[index]:spec.title;
         const float width=ImGui::GetContentRegionAvail().x;
@@ -124,6 +136,15 @@ bool DrawWindow(WindowState& state, const WindowSpec& spec, const Sky2Frame& bas
         ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(),ImGui::GetFontSize(),{position.x+10*s,position.y+9*s},
             ImGui::GetColorU32(state.section==index?ImVec4(.58f,.92f,.79f,1):ImVec4(.66f,.75f,.79f,1)),label?label:"",nullptr,std::max(1.0f,width-20*s));
         ImGui::PopID();
+    }
+    if(spec.asideFooter){
+        ImGui::EndChild();
+        ImGui::SetCursorPosY(asideTop+asideHeight-asideFooterHeight);
+        ImGui::BeginChild("aside_footer",{0,asideFooterHeight},ImGuiChildFlags_NavFlattened,
+            ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
+        // 与侧栏导航相同，这里仍处于 NoNav 和前后台禁用作用域中。
+        spec.asideFooter(spec.user,base,state.section);
+        ImGui::EndChild();
     }
     ImGui::EndChild();ImGui::SameLine();ImGui::PopItemFlag();
     if(state.section!=previousSection){state.resetFocus=true;tabStep=0;if(spec.changed)spec.changed(spec.user,state.section);}

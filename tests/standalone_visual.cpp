@@ -13,6 +13,15 @@
 #include <imgui_impl_dx11.h>
 #include <fstream>
 
+namespace tracker {
+// 离屏夹具不安装真实游戏输入挂钩；用相同 UI 编辑状态验证窗口动作分发，
+// 物理输入源与跨线程开关由 standalone_bridge_tests 的真实输入桥覆盖。
+bool InputModeShortcutAllowed() noexcept {
+    return ImGui::GetCurrentContext() && !StandaloneModeShortcutEditing() && !ImGui::GetIO().WantTextInput &&
+        !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+}
+}
+
 namespace {
 const Sky2UiApi* actual = nullptr;
 Sky2UiApi observed{};
@@ -21,6 +30,7 @@ ImVec2 headerPosition{};
 bool prepareConfirmation = false;
 bool expandedHelp = false;
 bool hudPage = false, startHudMove = false;
+bool mapApplyPage = false;
 bool hudLastToggleVisited = false;
 int32_t SKY2_CALL ObserveCheckbox(const char* id, const char* text, int32_t* value) {
     const int result = actual->checkbox(id, text, value);
@@ -31,7 +41,11 @@ int32_t SKY2_CALL ObserveCheckbox(const char* id, const char* text, int32_t* val
 int32_t SKY2_CALL ObserveTabBar(const char* id, const char* const* labels, int32_t count, int32_t selected) {
     headerPosition = ImGui::GetCursorScreenPos();
     const int result = actual->tab_bar(id, labels, count, selected);
-    return hudPage && std::strcmp(id, "settings.pages") == 0 ? 1 : result;
+    if (std::strcmp(id, "settings.pages") == 0) {
+        if (mapApplyPage) return 0;
+        if (hudPage) return 1;
+    }
+    return result;
 }
 void SKY2_CALL ObserveSize(float* width, float* height) {
     actual->content_size(width, height);
@@ -79,7 +93,8 @@ void Capture(const std::filesystem::path& path, int page, int width, int height,
     tracker::StandaloneChoosePage(page); tracker::g_panel.store(hudScenario != 2);
     hudPage = hudScenario == 1 || hudScenario == 4;
     hudLastToggleVisited = false;
-    mainWindow = nullptr; expandedHelp = scroll; ImVec2 initialHeader{}; float initialScroll = 0;
+    mainWindow = nullptr; expandedHelp = scroll; ImVec2 initialHeader{}, initialModePosition{}; float initialScroll = 0;
+    ImGuiWindow* modeFooter = nullptr;
     const int frames = hudScenario == 1 ? 32 : (hudScenario == 4 ? 110 : ((scroll || hudScenario == 3) ? 100 : 7));
     tracker::HudPreferences committedHud;
     for (int index = 0; index < frames; ++index) {
@@ -111,6 +126,17 @@ void Capture(const std::filesystem::path& path, int page, int width, int height,
         ImGui::NewFrame();
         const Sky2Frame frame{sizeof(Sky2Frame), float(width), float(height), scale, GetTickCount64(), (hudScenario == 1 && index == 22) ? 0 : 1, 1, 1, (hudScenario == 1 || hudScenario == 2) ? 0 : 1};
         tracker::DrawStandalonePanel(frame);
+        if (tracker::g_panel.load()) {
+            for (auto* window : GImGui->Windows) {
+                const auto* leaf = std::strrchr(window->Name, '/');
+                if (window->Active && leaf && std::strncmp(leaf + 1, "aside_footer_", 13) == 0) { modeFooter = window; break; }
+            }
+            if (index >= 6) {
+                Require(modeFooter && modeFooter->ScrollMax.y < 1, "mode footer fits measured height in the active language");
+                if (frame.controller && GImGui->NavWindow && GImGui->NavId)
+                    Require(std::strstr(GImGui->NavWindow->Name, "/main_"), "mode footer never captures yellow Main focus");
+            }
+        }
         if (hudScenario == 1 || hudScenario == 4) {
             for (auto* window : GImGui->Windows) {
                 const auto* leaf = std::strrchr(window->Name, '/');
@@ -129,6 +155,10 @@ void Capture(const std::filesystem::path& path, int page, int width, int height,
                 }
             }
             Require(shortcutsVisible, "fourth sidebar shortcut page stays selected across frames");
+            Require(tracker::StandaloneModeShortcutEditing(), "embedded shortcut editor is protected without requiring an ImGui popup");
+            const auto previousMode = tracker::g_mode.load();
+            tracker::ApplyStandaloneActions(tracker::ToggleMode);
+            Require(tracker::g_mode.load() == previousMode, "shortcut editing never applies a queued display-mode action");
             Require(GImGui->NavWindow && std::strstr(GImGui->NavWindow->Name, "/main_"), "shortcut navigation focus remains inside Main");
             if (index == 17) Require(std::strstr(GImGui->NavWindow->Name, "hotkey_editor"), "directional navigation reaches shortcut editor column");
         }
@@ -147,7 +177,7 @@ void Capture(const std::filesystem::path& path, int page, int width, int height,
             const auto* hud = ImGui::FindWindowByName("Sky2ChestHud");
             Require(hud && (hud->Flags & ImGuiWindowFlags_NoInputs) == ImGuiWindowFlags_NoInputs, "normal HUD remains click-through");
         }
-        if (index == 6) { initialHeader = headerPosition; initialScroll = mainWindow ? mainWindow->Scroll.y : 0; }
+        if (index == 6) { initialHeader = headerPosition; initialModePosition = modeFooter ? modeFooter->Pos : ImVec2{}; initialScroll = mainWindow ? mainWindow->Scroll.y : 0; }
         ImGui::Render(); const float background[]{.025f, .04f, .06f, 1};
         context->OMSetRenderTargets(1, &target, nullptr); context->ClearRenderTargetView(target, background);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
@@ -159,6 +189,8 @@ void Capture(const std::filesystem::path& path, int page, int width, int height,
         Require(mainWindow && mainWindow->ScrollMax.y > 0 && mainWindow->Scroll.y > initialScroll, "real Main RS scroll");
         Require(std::abs(headerPosition.x - initialHeader.x) < .25f && std::abs(headerPosition.y - initialHeader.y) < .25f,
             "Header remains fixed while Main scrolls");
+        Require(modeFooter && std::abs(modeFooter->Pos.y - initialModePosition.y) < .25f,
+            "mode footer remains fixed while Main scrolls");
     }
     if (hudScenario == 4) {
         Require(hudLastToggleVisited, "720p HUD final content toggle reachable with directional navigation");
@@ -222,6 +254,18 @@ int wmain(int argc, wchar_t** argv) {
     Capture(output / L"chest-hud-720p.png", 2, 1280, 720, false, report, 2);
     Capture(output / L"chest-shortcuts-720p.png", 3, 1280, 720, false, report, 3);
     Capture(output / L"chest-hud-settings-720p-scrolled.png", 2, 1280, 720, false, report, 4);
+    // 左侧底区独立测量八语长标签；720p 是最容易暴露按钮换行/底部裁剪的视口。
+    for (unsigned language = 0; language < 8; ++language) {
+        tracker::SetDisplayLanguage(static_cast<tracker::Language>(language));
+        Capture(output / (L"chest-overview-language-" + std::to_wstring(language) + L"-720p.png"), 0, 1280, 720, false, report);
+    }
+    tracker::SetDisplayLanguage(tracker::Language::Chinese);
+    fixture::context.browsing = false; fixture::context.canPrepareMap = true;
+    Capture(output / L"chest-travel-prepare-720p.png", 3, 1280, 720, false, report);
+    Capture(output / L"chest-return-prepare-720p.png", 4, 1280, 720, false, report);
+    fixture::exploration.travelPending = true;
+    mapApplyPage = true;
+    Capture(output / L"chest-map-apply-720p.png", 2, 1280, 720, false, report);
     assert(fixture::submitted == 0);
     report << "All production page checks passed; no travel submitted.\n";
     CoUninitialize();

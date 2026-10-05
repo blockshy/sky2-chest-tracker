@@ -32,9 +32,12 @@ std::atomic<uint64_t> lastFrame{0}, generation{1};
 std::atomic<uint64_t> bindingRevision{0};
 std::atomic<int> navigationDevice{-1};
 std::atomic<HWND> inputWindow{nullptr};
-std::atomic<WNDPROC> nextWindow{nullptr};
 std::atomic<InputWindowMessage> windowCallback{nullptr};
 std::atomic<uint32_t> panelMouseButtons{0};
+std::atomic<bool> modeShortcutEditing{false};
+// 原窗口过程挂在其 HWND 上，不能只保存一份全局链尾：游戏重新创建窗口时，
+// 旧窗口仍可能存在并被另一个 ASI 包在外层，贸然还原其过程会破坏合作链。
+constexpr wchar_t previousWindowProperty[] = L"Sky2ChestTracker.InputNext.v1";
 sky2solo::InputLease lease(1); // 宝箱稳定身份；与其它独立 Mod 的非零令牌保持不同。
 bool previousPanel = false;
 sky2solo::HotkeyKeyboardTracker keyboard;
@@ -106,7 +109,7 @@ DWORD WINAPI FilteredGetState(DWORD index, XINPUT_STATE* state) noexcept {
         else requested = StandaloneInputActions(sky2solo::HotkeyPadPressedMask(bindings, raw.buttons, previousButtons[index]));
         previousButtons[index] = raw.buttons;
         const auto result = filters[index].Update(raw, g_panel.load() && owns, available,
-            sky2solo::InputOwner() != 0 && !owns, requested);
+            sky2solo::InputOwner() != 0 && !owns, requested, InputModeShortcutAllowed());
         navigationReady[index] = result.navigate;
         if (raw.buttons & kView) modifier.fetch_or(1u << index); else modifier.fetch_and(~(1u << index));
         // 允许连接但闲置的槽 0 让位给真实使用的槽 1。完全相同的镜像样本
@@ -124,7 +127,8 @@ DWORD WINAPI FilteredGetState(DWORD index, XINPUT_STATE* state) noexcept {
         actionLatches.fetch_and(held);
         if (available) {
             if (result.activity) controller.store(true);
-            const auto allowed = sky2solo::InputOwner() ? (result.actions & TogglePanel) : result.actions;
+            const uint32_t panelActions = TogglePanel | (InputModeShortcutAllowed() ? ToggleMode : 0u);
+            const auto allowed = sky2solo::InputOwner() ? (result.actions & panelActions) : result.actions;
             const auto already = actionLatches.fetch_or(allowed);
             actions.fetch_or(allowed & ~already);
         }
@@ -173,6 +177,14 @@ uint32_t MouseButton(UINT message, WPARAM wparam, bool down) noexcept {
     return 0;
 }
 LRESULT CALLBACK ObserveWindow(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    const auto next = reinterpret_cast<WNDPROC>(GetPropW(window, previousWindowProperty));
+    const auto forward = [&]() {
+        const auto result = next ? CallWindowProcW(next, window, message, wparam, lparam) : DefWindowProcW(window, message, wparam, lparam);
+        // HWND 销毁后该句柄值可能被系统复用；最后一条消息结束后删除旧链记录。
+        if (message == WM_NCDESTROY) RemovePropW(window, previousWindowProperty);
+        return result;
+    };
+    if (window != inputWindow.load()) return forward();
     const bool available = Available();
     bool keyboardMouse = ((message == WM_KEYDOWN || message == WM_SYSKEYDOWN) && !(lparam & (1LL << 30))) ||
         message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN || message == WM_MBUTTONDOWN ||
@@ -189,14 +201,7 @@ LRESULT CALLBACK ObserveWindow(HWND window, UINT message, WPARAM wparam, LPARAM 
     if (message == WM_KILLFOCUS) {
         if (lease.Owns()) { suspendedOwnership.store(true); lease.Release(); }
         availableBefore.store(false); ResetInput(); controller.store(false);
-        const auto held = panelMouseButtons.exchange(0);
-        if (auto callback = windowCallback.load(); callback && held) {
-            // 实际松开可能发生在别的窗口；仅补齐本后端曾接收的鼠标按下，
-            // 不能把游戏自身的隐藏期 mouse-up 发给本后端并释放游戏捕获。
-            const UINT releases[]{WM_LBUTTONUP, WM_RBUTTONUP, WM_MBUTTONUP, WM_XBUTTONUP, WM_XBUTTONUP};
-            for (unsigned index = 0; index < 5; ++index) if (held & (1u << index))
-                callback(window, releases[index], index < 3 ? 0 : MAKEWPARAM(0, index == 3 ? XBUTTON1 : XBUTTON2), 0);
-        }
+        ReleaseInputMouseButtons();
     }
     const auto released = MouseButton(message, wparam, false);
     const bool paired = (panelMouseButtons.load() & released) != 0;
@@ -207,7 +212,12 @@ LRESULT CALLBACK ObserveWindow(HWND window, UINT message, WPARAM wparam, LPARAM 
     }
     if (paired) return 0;
     if (InputMessage(message) && KeyboardCaptured()) return message == WM_INPUT ? DefWindowProcW(window, message, wparam, lparam) : 0;
-    return CallWindowProcW(nextWindow.load(), window, message, wparam, lparam);
+    if (message == WM_NCDESTROY) {
+        SetInputFrameHealth(false);
+        inputWindow.store(nullptr);
+        panelMouseButtons.store(0);
+    }
+    return forward();
 }
 bool ReplaceSlot(void** slot, void* replacement, void* previous) noexcept {
     DWORD protection = 0;
@@ -241,16 +251,61 @@ bool InstallInputBridge(uintptr_t base) noexcept {
     Log("Standalone panel input installed: cooperative game XInput and keyboard IAT chain.");
     return true;
 }
-void AttachInputWindow(HWND window, InputWindowMessage callback) noexcept {
-    windowCallback.store(callback);
-    if (nextWindow.load()) return;
-    inputWindow.store(window);
+bool ReadInputMousePosition(HWND window, POINT& point) noexcept {
+    return sky2window::ReadMousePosition(window, point);
+}
+void NotifyInputMousePosition(HWND window, const POINT& point) noexcept {
+    // 这些基线只由持有渲染锁的 Present 线程维护；输入线程通过既有原子世代
+    // 宣布失焦/重绑，不会读写 POINT，避免窗口回调和渲染回调之间的数据竞争。
+    static HWND sampledWindow = nullptr;
+    static uint64_t sampledGeneration = 0;
+    static POINT previous{};
+    static bool valid = false;
+    if (window != inputWindow.load() || !InputPanelInteractive()) { valid = false; return; }
+    const auto currentGeneration = generation.load();
+    if (valid && sampledWindow == window && sampledGeneration == currentGeneration &&
+        (previous.x != point.x || previous.y != point.y)) controller.store(false);
+    previous = point; sampledWindow = window; sampledGeneration = currentGeneration; valid = true;
+}
+void ReleaseInputMouseButtons() noexcept {
+    const auto held = panelMouseButtons.exchange(0);
+    const auto window = inputWindow.load();
+    if (auto callback = windowCallback.load(); callback && window && held) {
+        // 实际松开可能发生在别的窗口，或发生在新后端建立之后。这里只补齐本
+        // 后端曾接收的按钮，不能发送游戏自己的隐藏期 mouse-up 或直接释放别人的捕获。
+        const UINT releases[]{WM_LBUTTONUP, WM_RBUTTONUP, WM_MBUTTONUP, WM_XBUTTONUP, WM_XBUTTONUP};
+        for (unsigned index = 0; index < 5; ++index) if (held & (1u << index))
+            callback(window, releases[index], index < 3 ? 0 : MAKEWPARAM(0, index == 3 ? XBUTTON1 : XBUTTON2), 0);
+    }
+}
+bool AttachInputWindow(HWND window, InputWindowMessage callback) noexcept {
+    if (!window || !IsWindow(window)) return false;
+    if (GetPropW(window, previousWindowProperty)) {
+        windowCallback.store(callback);
+        if (inputWindow.exchange(window) != window) ResetInput();
+        return true;
+    }
     const auto previous = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(window, GWLP_WNDPROC));
-    if (!previous) return;
-    nextWindow.store(previous); SetLastError(0);
+    if (!previous || !SetPropW(window, previousWindowProperty, reinterpret_cast<HANDLE>(previous))) return false;
+    SetLastError(0);
     const auto installed = SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&ObserveWindow));
-    if (!installed && GetLastError()) { nextWindow.store(nullptr); inputWindow.store(nullptr); Log("Panel window input unavailable."); }
-    else if (installed) nextWindow.store(reinterpret_cast<WNDPROC>(installed));
+    if (!installed && GetLastError()) {
+        RemovePropW(window, previousWindowProperty); Log("Panel window input unavailable."); return false;
+    }
+    if (installed) SetPropW(window, previousWindowProperty, reinterpret_cast<HANDLE>(installed));
+    windowCallback.store(callback);
+    inputWindow.store(window);
+    panelMouseButtons.store(0);
+    ResetInput();
+    return true;
+}
+void SetInputModeShortcutEditing(bool editing) noexcept {
+    if (modeShortcutEditing.exchange(editing) == editing) return;
+    // 进入或离开编辑都清除按下沿并等待释放，按住候选键离开弹窗不能补发模式切换。
+    ResetInput();
+}
+bool InputModeShortcutAllowed() noexcept {
+    return !modeShortcutEditing.load() && Available() && g_panel.load() && lease.Owns();
 }
 void PumpInputKeyboard() noexcept {
     const bool available = Available();
@@ -260,7 +315,8 @@ void PumpInputKeyboard() noexcept {
     const auto physical = sky2solo::ReadHotkeyKeyboardState();
     const auto matched = keyboard.Update(bindings, physical, available);
     auto value = StandaloneInputActions(matched);
-    if (g_panel.load() || sky2solo::InputOwner()) value &= TogglePanel;
+    if (g_panel.load() || sky2solo::InputOwner())
+        value &= TogglePanel | (InputModeShortcutAllowed() ? ToggleMode : 0u);
     if (value) { controller.store(false); actions.fetch_or(value); }
     if (keyboardTail.load()) {
         if (!sky2solo::AnyHotkeyKeyboardDown(physical) || (sky2solo::InputOwner() && !lease.Owns())) keyboardTail.store(false);

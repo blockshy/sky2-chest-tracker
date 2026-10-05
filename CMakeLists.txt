@@ -16,7 +16,7 @@ include(CTest)
 # 发布脚本另执行 clean-first；上游依赖固定到已记录的提交。
 set(TRACKER_LOCAL_HEADERS
     native/core.h native/progress.h native/tracker.h native/log.h native/runtime_files.h native/controller_logic.h native/input_bridge.h native/ui_scale.h
-    native/panel_pages.h native/panel_state.h native/standalone_panel.h native/standalone_input_policy.h
+    native/panel_pages.h native/panel_state.h native/standalone_panel.h native/standalone_input_policy.h native/window_input_geometry.h
     native/standalone_hotkeys.h native/standalone_hud.h native/hud_preferences.h native/panel_fonts.h
     native/localization.h native/localized_names.h native/game_language.h native/ui_text.h
     native/exploration.h native/exploration_logic.h native/travel_refresh.h native/travel_menu.h
@@ -49,7 +49,7 @@ set_source_files_properties(
     native/panel_pages.cpp native/standalone_panel.cpp native/standalone_hud.cpp native/hud_preferences.cpp native/hud_preferences_win.cpp native/panel_fonts.cpp
     native/standalone_ui/input.cpp native/standalone_ui/hotkeys.cpp native/standalone_ui/hotkeys_ui.cpp
     native/standalone_ui/ui.cpp native/standalone_ui/ui_layout.cpp native/standalone_ui/ui_navigation.cpp native/standalone_ui/ui_shell.cpp
-    tests/panel_runtime_tests.cpp tests/panel_state_tests.cpp tests/standalone_visual.cpp
+    tests/panel_runtime_tests.cpp tests/panel_state_tests.cpp tests/standalone_visual.cpp tests/standalone_backend_tests.cpp
     native/revisit.cpp native/revisit_native.cpp native/revisit_event_guard.cpp native/revisit_forest.cpp
     native/revisit_journal_win.cpp tests/revisit_journal_io_tests.cpp tests/revisit_tests.cpp tests/revisit_catalog_tests.cpp
     tests/revisit_event_guard_tests.cpp tests/revisit_event_guard_abi_tests.cpp tests/revisit_native_abi_tests.cpp
@@ -154,6 +154,20 @@ if(BUILD_TESTING)
         target_link_libraries(tracker_standalone_bridge_tests PRIVATE user32 bcrypt)
         add_test(NAME tracker_standalone_bridge_tests COMMAND tracker_standalone_bridge_tests)
         if(TARGET tracker_imgui)
+            # 真实 Win32/DX11/WARP 后端回归：仅以隐藏窗口模拟替代资格，不安装
+            # 游戏挂钩。直接包含生产 Present 和输入桥，检查设备/窗口重绑及 RTV 生命周期。
+            add_executable(tracker_standalone_backend_tests tests/standalone_backend_tests.cpp
+                native/standalone_ui/input.cpp native/standalone_ui/hotkeys.cpp
+                native/standalone_ui/ui.cpp native/standalone_ui/ui_layout.cpp
+                native/standalone_ui/ui_navigation.cpp native/standalone_ui/ui_shell.cpp)
+            # 夹具包含生产 .cpp，也显式追踪它们，防止增量构建仅看到测试文件而复用旧输入层。
+            set_source_files_properties(tests/standalone_backend_tests.cpp PROPERTIES OBJECT_DEPENDS
+                "${TRACKER_LOCAL_HEADERS};${CMAKE_CURRENT_SOURCE_DIR}/native/overlay.cpp;${CMAKE_CURRENT_SOURCE_DIR}/native/input_bridge.cpp")
+            target_include_directories(tracker_standalone_backend_tests PRIVATE native native/standalone_ui data/generated)
+            target_compile_definitions(tracker_standalone_backend_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+            target_compile_options(tracker_standalone_backend_tests PRIVATE /utf-8 /W4 /EHsc)
+            target_link_libraries(tracker_standalone_backend_tests PRIVATE minhook tracker_imgui d3d11 dxgi d3dcompiler user32 bcrypt)
+            add_test(NAME tracker_standalone_backend_tests COMMAND tracker_standalone_backend_tests)
             add_executable(tracker_standalone_visual tests/standalone_visual.cpp native/standalone_panel.cpp
                 native/standalone_hud.cpp native/hud_preferences.cpp native/hud_preferences_win.cpp
                 native/standalone_ui/hotkeys.cpp native/standalone_ui/hotkeys_ui.cpp

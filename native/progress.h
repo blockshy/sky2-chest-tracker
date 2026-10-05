@@ -6,6 +6,7 @@
 #include "map_catalog.h"
 #include <algorithm>
 #include <iterator>
+#include <string_view>
 #include <vector>
 
 namespace tracker {
@@ -38,11 +39,25 @@ inline std::vector<MapProgress> CountMaps(const uint8_t* bits, size_t size) {
 }
 
 inline std::vector<size_t> VisibleMaps(const std::vector<MapProgress>& maps, Mode mode, bool missingOnly) {
+    // 地区顺序只来自完整游戏目录中首次出现的位置，不读取译名、收集数量或筛选
+    // 结果。后期加入的异空间等地点归回同地区，地区内仍沿用原目录地点顺序。
+    // 必须在过滤前计算次序，否则隐藏某地区的首项后，该地区可能被误排到后面。
+    std::vector<size_t> regionOrder(maps.size());
+    const auto region = [&](size_t index) {
+        const auto* definition = maps[index].definition;
+        return std::string_view(definition && definition->region ? definition->region : "");
+    };
+    for (size_t i = 0; i < maps.size(); ++i) {
+        regionOrder[i] = i;
+        for (size_t earlier = 0; earlier < i; ++earlier) {
+            if (region(earlier) == region(i)) { regionOrder[i] = regionOrder[earlier]; break; }
+        }
+    }
     std::vector<size_t> indices;
     for (size_t i = 0; i < maps.size(); ++i)
         if (!missingOnly || maps[i].Remaining(mode)) indices.push_back(i);
-    // 有遗漏的地图排在前面；同类保持目录顺序，避免计数变化时整张清单跳动。
-    std::stable_partition(indices.begin(), indices.end(), [&](size_t i) { return maps[i].Remaining(mode) != 0; });
+    // 筛选只删除行；开箱、读档、切换周目口径都不能重新排列其它地区或地点。
+    std::stable_sort(indices.begin(), indices.end(), [&](size_t left, size_t right) { return regionOrder[left] < regionOrder[right]; });
     return indices;
 }
 }

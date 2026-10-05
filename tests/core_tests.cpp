@@ -47,6 +47,33 @@ int main() {
     check(VisibleMaps(maps, Mode::Current, true).size() == 59 && VisibleMaps(maps, Mode::Inherited, true).size() == 58,
           "继承已完成的地图在本周目筛选中仍可能存在遗漏");
     check(VisibleMaps(maps, Mode::Inherited, false).size() == 59, "全部地图筛选仍保留已完成地图");
+    // 合成目录故意让地区再次出现，并让第一地区首项已完成。遗漏筛选只能删行，
+    // 不能拿筛选后的首项重建地区次序，也不能把完成地图移到整个清单最后。
+    const MapDefinition orderDefinitions[]{
+        {"a1", "", "", "region-a", ""}, {"b1", "", "", "region-b", ""},
+        {"a2", "", "", "region-a", ""}, {"c1", "", "", "region-c", ""},
+        {"b2", "", "", "region-b", ""}};
+    std::vector<MapProgress> orderedMaps;
+    for (const auto& definition : orderDefinitions) orderedMaps.push_back({&definition, 0, 0, 1});
+    orderedMaps[0].current = orderedMaps[0].inherited = 1;
+    orderedMaps[1].inherited = 1;
+    const std::vector<size_t> expectedAll{0, 2, 1, 4, 3};
+    check(VisibleMaps(orderedMaps, Mode::Current, false) == expectedAll, "完整清单按地区归组且保留地区内目录顺序");
+    check(VisibleMaps(orderedMaps, Mode::Current, true) == std::vector<size_t>({2, 1, 4, 3}), "首项已完成也不会改变遗漏清单地区次序");
+    check(VisibleMaps(orderedMaps, Mode::Inherited, true) == std::vector<size_t>({2, 4, 3}), "继承筛选保持相同地区顺序");
+    check(VisibleMaps(orderedMaps, Mode::Inherited, false) == expectedAll, "关闭遗漏筛选完整恢复原地区排列");
+    orderedMaps[2].current = 1;
+    check(VisibleMaps(orderedMaps, Mode::Current, false) == expectedAll, "新开箱不得使完整清单行跳动");
+    // 在实际 59 地图目录中验证跨剧情阶段出现的同地区地点已合并为连续区间。
+    std::vector<std::string> closedRegions;
+    std::string previousRegion;
+    for (const auto index : VisibleMaps(maps, Mode::Inherited, false)) {
+        const std::string region = maps[index].definition->region;
+        if (region == previousRegion) continue;
+        check(std::find(closedRegions.begin(), closedRegions.end(), region) == closedRegions.end(), "真实目录相同地区不能再次分散出现");
+        if (!previousRegion.empty()) closedRegions.push_back(previousRegion);
+        previousRegion = region;
+    }
     // 新开箱尚未设置继承位也必须立即计入累计；重新传入旧位图则应回退。
     bits.fill(0);
     bits[1554 / 8] = 1u << (1554 % 8);
