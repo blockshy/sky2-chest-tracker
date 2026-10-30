@@ -39,15 +39,18 @@ class GameVersionTests(unittest.TestCase):
         """测试替换配置读取结果而非哈希算法，确认校验真正读取 EXE 的全部字节。"""
         current = b"synthetic verified current executable"
         previous = b"synthetic previous executable"
+        legacy = b"synthetic older released executable"
         version = read_game_version()
         version["exe_sha256"] = hashlib.sha256(current).hexdigest()
         version["previous_exe_sha256"] = hashlib.sha256(previous).hexdigest()
+        version["legacy_exe_sha256"] = hashlib.sha256(legacy).hexdigest()
         with tempfile.TemporaryDirectory() as folder, patch("game_version.read_game_version", return_value=version):
             game = Path(folder)
             exe = game / "sora_2nd.exe"
             exe.write_bytes(current)
             self.assertEqual(assert_supported_game(game), version["exe_sha256"])
-            for invalid in (previous, current + b"tampered", b"unknown executable"):
+            # 两代历史指纹都只证明旧文件归属，不能用于运行或生成当前资源目录。
+            for invalid in (previous, legacy, current + b"tampered", b"unknown executable"):
                 exe.write_bytes(invalid)
                 with self.assertRaisesRegex(ValueError, "EXE 版本不匹配"):
                     assert_supported_game(game)
@@ -92,7 +95,8 @@ class GameVersionTests(unittest.TestCase):
         version = read_game_version()
         self.assertEqual(json.loads(result.stdout), {
             "ExeSha256": version["exe_sha256"], "FileVersion": version["file_version"],
-            "SteamBuildId": version["steam_build_id"], "PreviousExeSha256": version["previous_exe_sha256"]})
+            "SteamBuildId": version["steam_build_id"], "PreviousExeSha256": version["previous_exe_sha256"],
+            "LegacyExeSha256": version["legacy_exe_sha256"]})
         source = VERSION_HEADER.read_text(encoding="utf-8")
         declaration = next(line for line in source.splitlines() if "kSupportedExeSha256[]" in line)
         with tempfile.TemporaryDirectory() as folder:

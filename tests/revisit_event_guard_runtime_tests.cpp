@@ -38,22 +38,22 @@ struct Fixture {
         tracker::g_revisitGuardInstalled.store(true);
         tracker::SetRevisitEventGuardActive(true);
         tracker::SetExperimentalRevisitTripActive(false);
-        Put(image, 0xC5DC88, Address(tables));
+        Put(image, 0xC5EDC8, Address(tables));
         Put(tables, 0x108, Address(holder)); Put(holder, 8, Address(file));
         Put(file, 0x10, Address(rows)); Put(file, 0x20, Address(headers));
         Put(headers, 0x48, uint32_t{120}); Put(headers, 0x4C, uint32_t{571});
         Put(rows, chest.row * 120, reinterpret_cast<uintptr_t>(chest.scene.data()));
         Put(rows, chest.row * 120 + 8, reinterpret_cast<uintptr_t>(chest.name.data()));
         Put(rows, chest.row * 120 + 0x10, chest.scriptParameter);
-        Put(image, 0xC61318, Address(field)); Put(image, 0xC61368, Address(savedata));
-        std::memcpy(field.data() + 0x170, chest.scene.data(), chest.scene.size());
-        Put(field, 0x190, static_cast<uint32_t>(chest.scene.size()));
-        Put(field, 0x648, Address(sceneData));
+        Put(image, 0xC62458, Address(field)); Put(image, 0xC624A8, Address(savedata));
+        std::memcpy(field.data() + 0x168, chest.scene.data(), chest.scene.size());
+        Put(field, 0x188, static_cast<uint32_t>(chest.scene.size()));
+        Put(field, 0x640, Address(sceneData));
         Put(sceneData, 8, reinterpret_cast<uintptr_t>(chest.scene.data()));
         const auto region = SceneRegion(chest.scene);
         Put(sceneData, 0x98, region);
         Put(sceneData, 0, uint32_t{1850011});
-        Put(field, 0x108, Address(root)); Put(root, 0xE77, uint8_t{1});
+        Put(field, 0x100, Address(root)); Put(root, 0xE77, uint8_t{1});
         Put(root, 0x808, uint32_t{1850001});
         Put(root, 0x810, reinterpret_cast<uintptr_t>(chest.scene.data()));
         Put(root, 0x8A0, region);
@@ -142,7 +142,7 @@ int main() {
         case 3: parameterOffset = 0x50; break;
         case 4: Put(fixture.savedata, 0x11100 + 12 * 4, kIntegerTag | 7u); break;
         case 5: fixture.savedata[0x100 + 16045 / 8] &= static_cast<uint8_t>(~(1u << (16045 % 8))); break;
-        case 6: Put(fixture.field, 0x1BC8, uint32_t{1}); break;
+        case 6: Put(fixture.field, 0x1BC0, uint32_t{1}); break;
         case 7: Put(fixture.sceneData, 8, reinterpret_cast<uintptr_t>("mp6011")); break;
         case 8: Put(fixture.headers, 0x4C, uint32_t{570}); break;
         case 9: Put(fixture.rows, chest.row * 120 + 0x10, uint32_t{1440}); break;
@@ -215,7 +215,7 @@ int main() {
         case 1: Put(fixture.root, 0x808, uint32_t{9999999}); break;
         case 2: Put(fixture.rows, chest.row * 120 + 8, reinterpret_cast<uintptr_t>("OtherChest")); break;
         case 3: Put(fixture.rows, chest.row * 120 + 0x10, uint32_t{1440}); break;
-        case 4: Put(fixture.field, 0x1BC8, uint32_t{1}); break;
+        case 4: Put(fixture.field, 0x1BC0, uint32_t{1}); break;
         }
         const auto before = fixture.callerStack;
         fixture.Run(chest.row, caller);
@@ -259,7 +259,7 @@ int main() {
         void* noAccess = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS);
         Check(noAccess != nullptr, "allocate guarded page");
         if (noAccess) {
-            Put(fixture.image, 0xC61318, reinterpret_cast<uintptr_t>(noAccess));
+            Put(fixture.image, 0xC62458, reinterpret_cast<uintptr_t>(noAccess));
             fixture.Run(chest.row);
             Check(fixture.callerStack == before, "unreadable scene rejected");
             VirtualFree(noAccess, 0, MEM_RELEASE);

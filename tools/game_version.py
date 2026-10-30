@@ -10,6 +10,7 @@ _FIELDS = {
     "file_version": ("kSupportedFileVersion", r"[0-9]+(?:\.[0-9]+){3}"),
     "steam_build_id": ("kSteamBuildId", r"[0-9]+"),
     "previous_exe_sha256": ("kPreviousExeSha256", r"[0-9a-f]{64}"),
+    "legacy_exe_sha256": ("kLegacyExeSha256", r"[0-9a-f]{64}"),
 }
 
 

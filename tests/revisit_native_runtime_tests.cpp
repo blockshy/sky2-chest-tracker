@@ -52,7 +52,7 @@ void FakeNativeLoad(uintptr_t field,const char* scene,const char* entry,const fl
     std::memcpy(loadedPoint.xyz,position,sizeof(loadedPoint.xyz));loadedPoint.yawRadians=yaw;loadedFlags=flags;
     tripActiveAtLoad=tracker::ExperimentalRevisitTripActive();
     Check(entry==nullptr,"custom scene loader passes no entry tag");
-    if (acceptLoad) { const uint32_t busy=1;std::memcpy(reinterpret_cast<void*>(field+0x1BC8),&busy,4); }
+    if (acceptLoad) { const uint32_t busy=1;std::memcpy(reinterpret_cast<void*>(field+0x1BC0),&busy,4); }
 }
 struct Fixture {
     void* image=VirtualAlloc(nullptr,0xD00000,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE);
@@ -100,14 +100,14 @@ struct Fixture {
         tracker::SetExperimentalRevisitTripActive(false);
         tracker::dispatchArmed=false; tracker::handoffMenuIdentity=tracker::handoffMinimapIdentity=0;
         tracker::authorize.store(&Allow);
-        Global(0xC61318,Address(field));Global(0xC61368,Address(save));Global(0xC5DC88,Address(tables));
-        Put(field,0x648,Address(scene));Put(field,0x730,Address(minimap));
-        Put(field,0x108,Address(sceneRoot));Put(field,0x660,Address(player));
-        Put(player,0,tracker::base+0xB05D18);Put(player,0x60,Address(actor));
+        Global(0xC62458,Address(field));Global(0xC624A8,Address(save));Global(0xC5EDC8,Address(tables));
+        Put(field,0x640,Address(scene));Put(field,0x728,Address(minimap));
+        Put(field,0x100,Address(sceneRoot));Put(field,0x658,Address(player));
+        Put(player,0,tracker::base+0xB06F78);Put(player,0x60,Address(actor));
         Put(actor,0x114,float{1});Put(actor,0xE8,float{23});Put(actor,0xEC,float{-3});Put(actor,0xF0,float{54});
         Put(sceneRoot,0xE77,uint8_t{1});Put(sceneRoot,0x808,uint32_t{1101000});Put(scene,0,uint32_t{1101000});
         Put(sceneRoot,0x808+8,reinterpret_cast<uintptr_t>(currentScene));Put(sceneRoot,0x808+0x98,uint32_t{2});
-        std::memcpy(field.data()+0x170,currentScene,sizeof(currentScene));
+        std::memcpy(field.data()+0x168,currentScene,sizeof(currentScene));
         Put(scene,8,reinterpret_cast<uintptr_t>(currentScene));Put(scene,0x98,uint32_t{2});
         Put(save,0x11100+12*4,uint32_t{0x40000008});
         for(uint32_t flag:tracker::completedFlags) save[0x100+flag/8]|=1u<<(flag%8);
@@ -135,7 +135,7 @@ struct Fixture {
         std::memcpy(minimap.data()+0x310,menu.data()+0x3C0,8);
         Put(minimap,0x28,uintptr_t{0});
     }
-    bool Dispatch() { return tracker::Sky2BeforeRevisitJump(Address(field),99,tracker::base+0x299CCF); }
+    bool Dispatch() { return tracker::Sky2BeforeRevisitJump(Address(field),99,tracker::base+0x29A86F); }
     uint64_t MenuResult() { uint64_t result=0;std::memcpy(&result,menu.data()+0x3C0,8);return result; }
     uint32_t ResultKind() { uint32_t result=0;std::memcpy(&result,minimap.data()+0x314,4);return result; }
     void Destination(uint32_t id,uint32_t region,uint32_t place,const char* name,uint8_t variant=0) {
@@ -149,7 +149,7 @@ struct Fixture {
     }
     void Source(uint32_t region,const char* name) {
         std::memset(currentScene,0,sizeof(currentScene));strcpy_s(currentScene,name);
-        std::memcpy(field.data()+0x170,currentScene,sizeof(currentScene));Put(scene,0x98,region);
+        std::memcpy(field.data()+0x168,currentScene,sizeof(currentScene));Put(scene,0x98,region);
         uint32_t id=1101000;
         // 普通场景使用生成目录里的真实根地点，便于区分同一大地图中的城市、
         // 关所等不同子地形；不能让测试用固定柏斯ID掩盖实际返程匹配问题。
@@ -177,7 +177,7 @@ struct Fixture {
         Put(placeRows,0xA8+0x90,static_cast<uint8_t>(point.variant));Put(placeRows,0xA8+0x98,point.region);
     }
     void Arrive(const tracker::RevisitReturnPoint& point) {
-        Put(field,0x1BC8,uint32_t{0});
+        Put(field,0x1BC0,uint32_t{0});
         std::memcpy(actor.data()+0xE8,point.xyz,sizeof(point.xyz));
         Put(actor,0x108,float{0});Put(actor,0x10C,std::sin(point.yawRadians/2));
         Put(actor,0x110,float{0});Put(actor,0x114,std::cos(point.yawRadians/2));
@@ -241,7 +241,7 @@ int RunUnrestricted(Fixture& f) {
               "experiment bypasses registration gray area unvisited and before-script permission only");
         Check(!testExperimentalTripActive,"queuing or closing alone cannot enable expanded trip protection");
         f.Transfer();
-        Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),37,tracker::base+0x299CB4)&&testExperimentalTripActive,
+        Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),37,tracker::base+0x29A854)&&testExperimentalTripActive,
               "expanded trip protection begins only at authorized native consumer");
         Check(testExperimentalTripChapter==1,"ordinary native consumer binds protection to its current chapter");
     }
@@ -252,7 +252,7 @@ int RunUnrestricted(Fixture& f) {
         Check(tracker::QueueRevisitNativeTravel(id,1000+id,tracker::ReadRevisitNativeContext())&&f.Close(),
               "complete no-map or reviewed internal native row supports experimental ordinary handoff");
         f.Transfer();
-        Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),id,tracker::base+0x299CCF)&&testExperimentalTripActive,
+        Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),id,tracker::base+0x29A86F)&&testExperimentalTripActive,
               "special native row still reaches original map-jump lookup rather than custom guessed coordinates");
     }
 
@@ -274,7 +274,7 @@ int RunUnrestricted(Fixture& f) {
         Check(tracker::QueueRevisitNativeTravel(alias.id,1200+alias.id,tracker::ReadRevisitNativeContext())&&f.Close(),
               "every native place scene alias passes verified map-close path");
         f.Transfer();
-        Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),alias.id,tracker::base+0x299CB4)&&
+        Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),alias.id,tracker::base+0x29A854)&&
               tracker::arrivalPoint.region==alias.region,"alias final consumer retains native XYZ and verified destination region");
     }
     f.Reset();const auto* alias=tracker::CatalogDestination(62,0);f.Destination(62,alias->region,alias->place,alias->scene);
@@ -310,7 +310,7 @@ int RunUnrestricted(Fixture& f) {
     Check(tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),origin),"experimental forest departure still captures exact original position");
     Check(tracker::QueueRevisitNativeTravel(tracker::forest::kTarget,1500,tracker::ReadRevisitNativeContext())&&f.Close(),
           "early forest needs guard readiness but no story completion flags");
-    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x299CB4);
+    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x29A854);
     Check(loadCalls==1&&tripActiveAtLoad&&testExperimentalTripActive,"forest trip protection is active before loader initialization");
     Check(testExperimentalTripChapter==1,"forest custom loader binds protection to its current chapter");
     f.Arrive(tracker::arrivalPoint);tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
@@ -324,20 +324,20 @@ int RunUnrestricted(Fixture& f) {
     f.Reset();tracker::SetExperimentalRevisitTripActive(true,8);tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),origin);f.ReturnTable(origin);
     Check(tracker::QueueRevisitNativeReturn(origin,1501,tracker::ReadRevisitNativeContext())&&f.Close()&&testExperimentalTripActive,
           "queuing exact return does not clear protection while still in destination");
-    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4);
+    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854);
     Check(loadCalls==1&&!tripActiveAtLoad&&!testExperimentalTripActive,"return turns off experimental protection before original source initialization");
     f.Reset();tracker::SetExperimentalRevisitTripActive(true,8);tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),origin);f.ReturnTable(origin);
     tracker::QueueRevisitNativeReturn(origin,1502,tracker::ReadRevisitNativeContext());f.Close();f.Transfer();acceptLoad=false;
-    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4);
+    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854);
     Check(testExperimentalTripActive,"rejected native return loader restores previous experimental trip protection");
     Check(testExperimentalTripChapter==8,"failed return restores protection only for the consumer chapter");
     f.Reset();tracker::SetExperimentalRevisitTripActive(true,7);tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),origin);f.ReturnTable(origin);
     tracker::QueueRevisitNativeReturn(origin,1505,tracker::ReadRevisitNativeContext());f.Close();f.Transfer();acceptLoad=false;
-    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4);
+    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854);
     Check(!testExperimentalTripActive,"failed return cannot restore stale protection from another chapter");
     f.Reset();f.ForestTable();tracker::QueueRevisitNativeTravel(tracker::forest::kTarget,1503,tracker::ReadRevisitNativeContext());
     f.Close();f.Transfer();acceptLoad=false;
-    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x299CB4);
+    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x29A854);
     Check(!testExperimentalTripActive,"rejected forest loader does not leave expanded protection enabled");
     f.Reset();testForestGuardReady=false;
     Check(!tracker::RevisitNativeTargetAvailable(tracker::forest::kTarget,tracker::ReadRevisitNativeContext()),"experiment still refuses missing forest protection");
@@ -365,13 +365,13 @@ int RunUnrestricted(Fixture& f) {
           "目的地原生数据尚未通过核对")==0,"hidden experimental targets do not report unrelated story restrictions");
     f.Reset();f.ForestTable();tracker::QueueRevisitNativeTravel(tracker::forest::kTarget,1504,tracker::ReadRevisitNativeContext());
     f.Close();f.Transfer();testForestGuardReady=false;
-    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x299CB4);
+    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x29A854);
     Check(loadCalls==0&&!testExperimentalTripActive,"protection lost before forest consumer prevents loading and trip activation");
 
     // 请求的5秒期限、取消、忙碌分支、真实菜单及版本身份不属于目的地剧情限制。
     for(unsigned invalid=0;invalid<3;++invalid) {
         f.Reset();
-        if(invalid==0) Put(f.field,0x1BC8,uint32_t{1});
+        if(invalid==0) Put(f.field,0x1BC0,uint32_t{1});
         if(invalid==1) f.save[0x10B]|=0x20;
         if(invalid==2) Put(f.menu,0xB8,int32_t{6});
         tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
@@ -395,6 +395,17 @@ int RunUnrestricted(Fixture& f) {
 int main() {
     Fixture f;
     if(!f.image) return 2;
+    // Ver.1.05 的相邻字段仍可能保存非零值。明确污染上一版的偏移，验证生产路径
+    // 读取的是当前场景/角色/地图及繁忙位，而不是碰巧从一块零内存中取得有效状态。
+    f.Reset();
+    Put(f.field,0x108,uintptr_t{1});Put(f.field,0x648,uintptr_t{1});
+    Put(f.field,0x660,uintptr_t{1});Put(f.field,0x730,uintptr_t{1});
+    Put(f.field,0x1BC8,uint32_t{0x4001});
+    tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
+    const auto patchedContext=tracker::ReadRevisitNativeContext();
+    Check(patchedContext.valid&&patchedContext.browsing&&!patchedContext.busy&&patchedContext.returnPointReady,
+          "Ver.1.05 reads current field layout despite nonzero previous offsets");
+    f.Reset();
 #if SKY2_UNRESTRICTED_TRAVEL
     return RunUnrestricted(f);
 #else
@@ -458,7 +469,7 @@ int main() {
     Put(f.player,0x60,Address(f.actor));tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(tracker::ReadRevisitNativeContext().returnPointReady,"fresh successful capture restores readiness");
     f.Reset();
-    f.Global(0xC61318,uintptr_t{0});tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
+    f.Global(0xC62458,uintptr_t{0});tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(!tracker::ReadRevisitNativeContext().valid,"unavailable game objects publish invalid context instead of stale state");
 
     // 每个已审核原生目的地逐一走生产提交及最终消费者校验，防止只验证首个入口。
@@ -470,7 +481,7 @@ int main() {
         Check(tracker::QueueRevisitNativeTravel(destination.id,destination.id,tracker::ReadRevisitNativeContext())&&f.Close(),
               "every reviewed destination submits normally");
         f.Transfer();
-        Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),destination.id,tracker::base+0x299CB4)&&
+        Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),destination.id,tracker::base+0x29A854)&&
               tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Dispatched,
               "every reviewed destination reaches original consumer");
     }
@@ -482,11 +493,11 @@ int main() {
     Check(tracker::QueueRevisitNativeTravel(15,100,tracker::ReadRevisitNativeContext())&&f.Close(),
           "chapter-eight prologue save can request fixed Bose return after restart");
     f.Transfer();
-    Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),15,tracker::base+0x299CCF),
+    Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),15,tracker::base+0x29A86F),
           "restart return reaches original native consumer");
 
     f.Reset();f.Source(2,"mp1010");Check(f.Queue(),"ordinary source is no longer restricted to Bose city");
-    f.Reset();Put(f.field,0x1BC8,uint32_t{1});tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
+    f.Reset();Put(f.field,0x1BC0,uint32_t{1});tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(!f.Queue(),"active field-map change rejects new request");
     f.Reset();tracker::publishedAt=GetTickCount64()-2000;
     Check(!f.Queue(),"stale published context cannot queue after native updates stop");
@@ -522,7 +533,7 @@ int main() {
     f.Reset();Put(f.save,0x11100+12*4,uint32_t{0x40000009});f.Source(6,"mp6012");f.ReturnTable(anchor);
     Check(tracker::QueueRevisitNativeReturn(anchor,201,tracker::ReadRevisitNativeContext())&&f.Close(),"restart can queue exact return from retained point");
     f.Transfer();
-    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4)&&
+    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854)&&
           loadCalls==1&&loadedFlags==0x4001&&std::strcmp(loadedPoint.scene,anchor.scene)==0&&
           !std::memcmp(loadedPoint.xyz,anchor.xyz,sizeof(anchor.xyz))&&loadedPoint.yawRadians==anchor.yawRadians,
           "final native consumer receives exact scene coordinates yaw and ordinary load flags");
@@ -535,9 +546,9 @@ int main() {
     // 同场景必须沿原生同图状态机，并且没有加载转换证据时不能误报已到达。
     f.Reset();tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),anchor);f.ReturnTable(anchor);
     Check(tracker::QueueRevisitNativeReturn(anchor,203,tracker::ReadRevisitNativeContext())&&f.Close(),"same-scene return queues");
-    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4);
+    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854);
     Check(loadedFlags==0x4021,"same-scene return uses original reposition lifecycle flag");
-    tracker::sawLoadTransition=false;Put(f.field,0x1BC8,uint32_t{0});
+    tracker::sawLoadTransition=false;Put(f.field,0x1BC0,uint32_t{0});
     for(int i=0;i<4;++i) tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Dispatched,"matching preexisting position alone is not proof of arrival");
     tracker::dispatchedAt=GetTickCount64()-61000;tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
@@ -551,18 +562,18 @@ int main() {
           "invalid return variant rejected before native map closes");
     f.Reset();tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),anchor);f.ReturnTable(anchor);
     tracker::QueueRevisitNativeReturn(anchor,205,tracker::ReadRevisitNativeContext());f.Close();f.Transfer();tracker::authorize.store(&CancelAuthorize);
-    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4)&&loadCalls==0,
+    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854)&&loadCalls==0,
           "cancel during final return authorization never calls native loader");
     f.Reset();tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),anchor);f.ReturnTable(anchor);
     tracker::QueueRevisitNativeReturn(anchor,206,tracker::ReadRevisitNativeContext());f.Close();f.Transfer();acceptLoad=false;
-    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4);
+    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854);
     Check(tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Rejected,"native loader that fails to arm transition cannot report success");
     f.Reset();tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),anchor);f.ReturnTable(anchor);
     f.save[0x100+22040/8]|=1u<<(22040%8);tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(anchor.progressSignature!=tracker::ReadRevisitNativeContext().progressSignature&&
           tracker::QueueRevisitNativeReturn(anchor,207,tracker::ReadRevisitNativeContext())&&f.Close(),
           "long-term return allows legitimate optional observation since the anchor was recorded");
-    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4);
+    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854);
     Check(loadCalls==1,"changed optional story bit does not strand the player after restart");
     f.Reset();tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),anchor);f.ReturnTable(anchor);
     tracker::QueueRevisitNativeReturn(anchor,208,tracker::ReadRevisitNativeContext());
@@ -595,15 +606,15 @@ int main() {
     f.Reset();f.Source(6,"mp6011");f.Queue();f.Close();f.Transfer();f.Dispatch();
     for(int i=0;i<4;++i) tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Dispatched,"same-scene outbound requires busy transition evidence");
-    Put(f.field,0x1BC8,uint32_t{1});tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
-    Put(f.field,0x1BC8,uint32_t{0});
+    Put(f.field,0x1BC0,uint32_t{1});tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
+    Put(f.field,0x1BC0,uint32_t{0});
     for(int i=0;i<3;++i) tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Arrived,"same-scene native load can confirm after busy clears");
 
     f.Reset();tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),anchor);f.ReturnTable(anchor);
     tracker::QueueRevisitNativeReturn(anchor,209,tracker::ReadRevisitNativeContext());f.Close();f.Transfer();
-    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4);
-    Put(f.field,0x1BC8,uint32_t{0});Put(f.actor,0xE8,anchor.xyz[0]+5);
+    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854);
+    Put(f.field,0x1BC0,uint32_t{0});Put(f.actor,0xE8,anchor.xyz[0]+5);
     for(int i=0;i<4;++i) tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Dispatched,"right scene but wrong position cannot confirm exact return");
     Put(f.actor,0xE8,anchor.xyz[0]);Put(f.actor,0x10C,float{1});Put(f.actor,0x114,float{0});
@@ -616,12 +627,12 @@ int main() {
     f.Reset();tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),anchor);f.ReturnTable(anchor);
     tracker::QueueRevisitNativeReturn(anchor,210,tracker::ReadRevisitNativeContext());f.Close();f.Transfer();
     tracker::requestedAt=GetTickCount64()-6000;
-    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4)&&loadCalls==0&&f.ResultKind()==0,
+    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854)&&loadCalls==0&&f.ResultKind()==0,
           "expired exact return is withdrawn without executing load");
     f.Reset();tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),anchor);f.ReturnTable(anchor);
     tracker::QueueRevisitNativeReturn(anchor,211,tracker::ReadRevisitNativeContext());f.Close();f.Transfer();
     f.save[0x10B]|=0x20;
-    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4)&&loadCalls==0,
+    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854)&&loadCalls==0,
           "event-mode flag introduced after close blocks custom return loader");
 
     // 荣耀号终章的根地点region7，内部地形region0；归一不能丢失真实ID/scene校验。
@@ -649,8 +660,8 @@ int main() {
           !tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),anchor),
           "outbound arrival does not require exact-return actor capture");
     f.Reset();f.Source(6,"mp6011");f.Queue();f.Close();f.Transfer();f.Dispatch();
-    f.Global(0xC61318,uintptr_t{0});tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
-    f.Global(0xC61318,Address(f.field));
+    f.Global(0xC62458,uintptr_t{0});tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
+    f.Global(0xC62458,Address(f.field));
     for(int i=0;i<3;++i) tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(!tracker::sawLoadTransition&&tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Dispatched,
           "temporarily unreadable context is not false evidence of same-scene loading");
@@ -658,15 +669,15 @@ int main() {
     // 原生Minimap Update在换图时可能停帧，因此有时看不到短暂busy；必须用已核对
     // 的原生待加载描述变化证明请求实际进入加载，不能只看scene没有变化。
     f.Reset();f.Source(6,"mp6011");f.Queue();f.Close();f.Transfer();f.Dispatch();
-    std::memcpy(f.field.data()+0x194,f.currentScene,sizeof(f.currentScene));
-    const float nativeTarget[3]={0,0,0};std::memcpy(f.field.data()+0x1BA8,nativeTarget,sizeof(nativeTarget));
-    Put(f.field,0x1BB8,float{0});
+    std::memcpy(f.field.data()+0x18C,f.currentScene,sizeof(f.currentScene));
+    const float nativeTarget[3]={0,0,0};std::memcpy(f.field.data()+0x1BA0,nativeTarget,sizeof(nativeTarget));
+    Put(f.field,0x1BB0,float{0});
     for(int i=0;i<3;++i) tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Arrived,
           "changed native load descriptor confirms same-scene transition when busy frame was not observed");
     f.Reset();f.Source(6,"mp6011");
-    std::memcpy(f.field.data()+0x194,f.currentScene,sizeof(f.currentScene));
-    std::memcpy(f.field.data()+0x1BA8,nativeTarget,sizeof(nativeTarget));Put(f.field,0x1BB8,float{0});
+    std::memcpy(f.field.data()+0x18C,f.currentScene,sizeof(f.currentScene));
+    std::memcpy(f.field.data()+0x1BA0,nativeTarget,sizeof(nativeTarget));Put(f.field,0x1BB0,float{0});
     f.Queue();f.Close();f.Transfer();f.Dispatch();
     for(int i=0;i<3;++i) tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Dispatched,
@@ -708,12 +719,12 @@ int main() {
     Check(tracker::QueueRevisitNativeReturn(splitPoint,700,splitContext)&&f.Close()&&
           tracker::requestedReturn.variant==2&&tracker::requestedReturn.place==1200000,
           "real split-type return queues with original record fields unchanged");
-    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4);
+    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854);
     Check(loadCalls==1&&loadedFlags==0x4021&&tracker::arrivalPoint.variant==2,
           "split-type return reaches native same-scene consumer while retaining terrain arrival identity");
     tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(!tracker::ReadRevisitNativeContext().returnPointReady,"native transition clears captured-point readiness");
-    Put(f.field,0x1BC8,uint32_t{0});
+    Put(f.field,0x1BC0,uint32_t{0});
     for(int i=0;i<3;++i) tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Arrived&&
           tracker::ReadRevisitNativeContext().returnPointReady,"split-type exact return confirms actual position and restores capture readiness");
@@ -749,7 +760,7 @@ int main() {
         Check(tracker::QueueRevisitNativeTravel(id,720+id,cityContext)&&f.Close(),
               "selected city variant passes runtime identity verification before native close");
         f.Transfer();
-        Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),id,tracker::base+0x299CB4)&&
+        Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),id,tracker::base+0x29A854)&&
               tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Dispatched,
               "city variant reaches original consumer without replacing native branch selection");
     }
@@ -869,7 +880,7 @@ int main() {
     Check(!tracker::RevisitNativeTargetAvailable(53,earlyContext)&&earlyContext.nativeRuleStatus[53]==tracker::RuleBeforeScript,
           "chapter-one actual story target remains unavailable");
     Check(tracker::QueueRevisitNativeReturn(earlyAnchor,601,earlyContext)&&f.Close(),"ordinary early exact return closes through existing native lifecycle");
-    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4);
+    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854);
     Check(loadCalls==1&&std::strcmp(loadedPoint.scene,"mp2000")==0,"early exact return dispatches native loader with saved coordinates");
 
     // 本机真实前期存档位于mp2000道路：root1200000、mapPlace1208000没有Spot。
@@ -883,7 +894,7 @@ int main() {
     Check(tracker::ReadRevisitNativeReturnPoint(earlyContext,earlyAnchor)&&earlyAnchor.place==1200000&&earlyAnchor.mapPlace==1208000&&
           tracker::RevisitNativeReturnPhaseAllowed(earlyAnchor,earlyContext),"real unmapped road captures independently validated root and terrain identity");
     Check(tracker::QueueRevisitNativeReturn(earlyAnchor,603,earlyContext)&&f.Close(),"unmapped road return passes real static place validation");
-    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4);
+    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854);
     Check(loadCalls==1&&std::strcmp(loadedPoint.scene,"mp2000")==0,"unmapped road exact return uses unchanged native loading path");
     for(uint32_t flag:{17019u,17022u}) {
         f.Reset();Put(f.save,0x11100+12*4,uint32_t{0x40000001});
@@ -938,7 +949,7 @@ int main() {
         Check(tracker::QueueRevisitNativeTravel(2,610+changedFlag,tracker::ReadRevisitNativeContext())&&f.Close(),
               "ordinary early target prepares native result before story race");
         f.Transfer();f.save[0x100+changedFlag/8]^=1u<<(changedFlag%8);
-        Check(tracker::Sky2BeforeRevisitJump(Address(f.field),2,tracker::base+0x299CB4)&&f.ResultKind()==0&&
+        Check(tracker::Sky2BeforeRevisitJump(Address(f.field),2,tracker::base+0x29A854)&&f.ResultKind()==0&&
               tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Rejected,
               "final ordinary consumer rejects changed early story condition");
     }
@@ -947,7 +958,7 @@ int main() {
     tracker::ReadRevisitNativeReturnPoint(earlyContext,earlyAnchor);
     Check(tracker::QueueRevisitNativeReturn(earlyAnchor,620,earlyContext)&&f.Close(),"early exact return prepares native result before phase race");
     f.Transfer();f.save[0x100+17019/8]|=1u<<(17019%8);
-    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4)&&
+    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854)&&
           loadCalls==0&&f.ResultKind()==0,"custom return consumer rechecks newly active global story interception");
     for(uint32_t id:{35u,36u,92u,93u,94u,95u,96u,150u}) {
         f.Reset();Put(f.save,0x11100+12*4,uint32_t{0x40000001});f.Rules(id);
@@ -1019,14 +1030,14 @@ int main() {
     f.Destination(126,cross->region,cross->place,cross->scene);Put(f.placeRows,0x1F8+0x98,uint32_t{2});f.Rules(126);
     Check(tracker::QueueRevisitNativeTravel(126,301,tracker::ReadRevisitNativeContext())&&f.Close(),"ordinary cross-region point queues through native map close");
     f.Transfer();
-    Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),126,tracker::base+0x299CB4)&&tracker::arrivalPoint.region==2,
+    Check(!tracker::Sky2BeforeRevisitJump(Address(f.field),126,tracker::base+0x29A854)&&tracker::arrivalPoint.region==2,
           "cross-region arrival uses destination t_place rather than menu display region");
     f.Source(2,"mp1000");for(int i=0;i<3;++i) tracker::Sky2BeforeRevisitUpdate(Address(f.minimap));
     Check(tracker::ReadRevisitNativeStatus().phase==tracker::RevisitNativePhase::Arrived,"ordinary cross-region arrival is confirmed");
 
     f.Reset();const auto* normal=tracker::CatalogDestination(2,0);f.Destination(2,normal->region,normal->place,normal->scene);f.Rules(2);
     tracker::QueueRevisitNativeTravel(2,302,tracker::ReadRevisitNativeContext());f.Close();f.Transfer();f.ruleSpots[0].blocked=1;
-    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),2,tracker::base+0x299CB4)&&f.ResultKind()==0,
+    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),2,tracker::base+0x29A854)&&f.ResultKind()==0,
           "final consumer rechecks native story block after map close");
     f.Reset();f.Destination(2,normal->region,normal->place,normal->scene);f.Rules(2);Put(f.row,0x58,uint8_t{0x80});
     tracker::QueueRevisitNativeTravel(2,303,tracker::ReadRevisitNativeContext());
@@ -1041,7 +1052,7 @@ int main() {
     Check(tracker::QueueRevisitNativeTravel(tracker::forest::kTarget,401,forestContext)&&f.Close(),
           "custom forest target closes native map without a native spot row");
     f.Transfer();
-    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x299CB4)&&
+    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x29A854)&&
           loadCalls==1&&loadedFlags==0x4001&&std::strcmp(loadedPoint.scene,tracker::forest::kScene)==0&&
           loadedPoint.xyz[0]==0&&loadedPoint.xyz[1]==0&&loadedPoint.xyz[2]==0&&loadedPoint.yawRadians==0,
           "forest sentinel dispatches native full loader at verified original free-action spawn");
@@ -1082,25 +1093,25 @@ int main() {
     }
     f.Reset();f.ForestTable();tracker::QueueRevisitNativeTravel(tracker::forest::kTarget,405,tracker::ReadRevisitNativeContext());
     f.Close();f.Transfer();testForestGuardReady=false;
-    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x299CB4)&&
+    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x29A854)&&
           loadCalls==0&&f.ResultKind()==0,"forest guard lost after closing cannot reach loader");
     f.Reset();f.ForestTable();tracker::QueueRevisitNativeTravel(tracker::forest::kTarget,406,tracker::ReadRevisitNativeContext());
     f.Close();f.Transfer();tracker::authorize.store(&DisableForestGuardAuthorize);
-    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x299CB4)&&loadCalls==0,
+    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x29A854)&&loadCalls==0,
           "forest guard is rechecked after final authorization callback");
     f.Reset();f.ForestTable();tracker::QueueRevisitNativeTravel(tracker::forest::kTarget,407,tracker::ReadRevisitNativeContext());
     f.Close();f.Transfer();tracker::authorize.store(&CancelAuthorize);
-    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x299CB4)&&loadCalls==0,
+    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x29A854)&&loadCalls==0,
           "cancellation during custom forest authorization cannot be revived");
     f.Reset();f.ForestTable();tracker::QueueRevisitNativeTravel(tracker::forest::kTarget,408,tracker::ReadRevisitNativeContext());
     f.Close();f.Transfer();tracker::requestedAt=GetTickCount64()-6000;
-    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x299CB4)&&loadCalls==0,
+    Check(tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x29A854)&&loadCalls==0,
           "expired forest handoff never executes load");
 
     // 原地回访仍走普通完整加载生命周期；记录指向森林时也不能绕过保护门槛。
     f.Reset();f.ForestTable();f.Source(0,tracker::forest::kScene);
     tracker::QueueRevisitNativeTravel(tracker::forest::kTarget,409,tracker::ReadRevisitNativeContext());f.Close();f.Transfer();
-    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x299CB4);
+    tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::forest::kTarget,tracker::base+0x29A854);
     Check(loadCalls==1&&loadedFlags==0x4021,"same-forest custom load retains native same-scene flag");
     f.Reset();f.ForestTable();f.Source(0,tracker::forest::kScene);
     Check(tracker::ReadRevisitNativeReturnPoint(tracker::ReadRevisitNativeContext(),anchor)&&anchor.region==1,
@@ -1114,7 +1125,7 @@ int main() {
     f.ForestTable();f.Source(0,tracker::forest::kScene);f.ReturnTable(anchor);testForestGuardReady=false;
     Check(tracker::QueueRevisitNativeReturn(anchor,411,tracker::ReadRevisitNativeContext())&&f.Close(),
           "forest source permits escape to saved ordinary scene even when optional guard is unavailable");
-    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x299CB4);
+    f.Transfer();tracker::Sky2BeforeRevisitJump(Address(f.field),tracker::kRevisitReturnTarget,tracker::base+0x29A854);
     Check(loadCalls==1&&std::strcmp(loadedPoint.scene,anchor.scene)==0,"forest emergency escape uses unchanged saved origin");
     f.Reset();f.ForestTable();f.Source(0,tracker::forest::kScene);
     Put(f.scene,0x98,uint32_t{1});Put(f.sceneRoot,0x808+0x98,uint32_t{1});Put(f.placeRows,0x98,uint32_t{1});

@@ -15,7 +15,8 @@ if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'game_version.h') -PathType 
 }
 $script:Sky2SupportedExeHash = $script:Sky2GameVersion.ExeSha256
 # 历史白名单只用于确认旧文件归属；安装目标仍严格要求当前支持的唯一 EXE。
-$script:Sky2HistoricalExeHashes = @($script:Sky2SupportedExeHash, $script:Sky2GameVersion.PreviousExeSha256)
+$script:Sky2HistoricalExeHashes = @($script:Sky2SupportedExeHash,
+    $script:Sky2GameVersion.PreviousExeSha256, $script:Sky2GameVersion.LegacyExeSha256)
 $script:Sky2Loader974Hash = '031a3e5576d91dce1e438d36b9a3d462c7334ab4791990a8ff1e3ddc0e132daf'
 
 function Assert-Sky2PlainPath {

@@ -14,6 +14,7 @@ $fields = [ordered]@{
     FileVersion = @('kSupportedFileVersion', '[0-9]+(?:\.[0-9]+){3}')
     SteamBuildId = @('kSteamBuildId', '[0-9]+')
     PreviousExeSha256 = @('kPreviousExeSha256', '[0-9a-f]{64}')
+    LegacyExeSha256 = @('kLegacyExeSha256', '[0-9a-f]{64}')
 }
 $version = [ordered]@{}
 foreach ($key in $fields.Keys) {

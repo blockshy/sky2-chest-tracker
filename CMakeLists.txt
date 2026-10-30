@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Sky2ChestTracker VERSION 0.6.1 LANGUAGES C CXX)
+project(Sky2ChestTracker VERSION 0.6.2 LANGUAGES C CXX)
 
 # 关闭 DLL 构建时，仅运行纯逻辑测试；CI 不需要下载或持有游戏资源。
 option(SKY2_BUILD_MOD "构建 Windows 游戏插件" ON)
@@ -15,7 +15,7 @@ include(CTest)
 # 显式登记头文件，防止中文 MSVC 的包含文件输出解析异常导致复用陈旧对象。
 # 发布脚本另执行 clean-first；上游依赖固定到已记录的提交。
 set(TRACKER_LOCAL_HEADERS
-    native/game_version.h
+    native/game_version.h native/field_layout.h
     native/core.h native/progress.h native/tracker.h native/log.h native/runtime_files.h native/controller_logic.h native/input_bridge.h native/ui_scale.h
     native/localization.h native/localized_names.h native/game_language.h native/ui_text.h
     native/exploration.h native/exploration_logic.h native/travel_refresh.h native/travel_menu.h

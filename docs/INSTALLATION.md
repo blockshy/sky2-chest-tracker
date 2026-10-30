@@ -1,173 +1,84 @@
-# 安装、更新与卸载
+# 手动安装、更新与卸载
 
-[项目首页](../README.md) · [操作说明](USAGE.md) · [全传送与精确返程](TRAVEL.md)
+[项目首页](../README.md) · [操作指南](USAGE.md) · [传送与返程](TRAVEL.md) · [ASI 与 Loader](ASI_LOADER.md)
 
-本文对应 **0.6.1**，适配**游戏界面版本 Ver.1.04**（EXE 文件版本 **1.4.0.0**，Steam build **25721473**）。安装包与校验文件见 [0.6.1 Release](https://github.com/blockshy/sky2-chest-tracker/releases/tag/v0.6.1)。可以使用 PowerShell 脚本或手动复制，无需 Python 或开发工具；0.6.0 附件保留供旧游戏使用。
-
-## 目录
-
-- [选择分发方式](#选择分发方式)
-- [兼容版本](#兼容版本)
-- [开始前](#开始前)
-- [脚本安装、更新与卸载](#脚本安装更新与卸载)
-- [手动安装、更新与卸载](#手动安装更新与卸载)
-- [手动与脚本混用](#手动与脚本混用)
-- [与其他 Mod 共存](#与其他-mod-共存)
-- [保留哪些文件](#保留哪些文件)
-
-## 选择分发方式
-
-| 分发 | 安装入口 | 数据目录 |
-| --- | --- | --- |
-| Standalone 独立版 | 根目录 `xinput1_4.dll`，无需额外 Loader | `Sky2ChestTracker/` |
-| ASI 插件版 | 公共 Loader 加载 `plugins/Sky2ChestTracker.asi` | `plugins/Sky2ChestTracker/` |
-
-两种宝箱分发功能一致，**二选一安装**。ASI 所需的 Ultimate ASI Loader 9.7.4 x64 单独打包；宝箱卸载不移除公共 Loader。ASI 安装与旧数据迁移见 [ASI 与 Loader 指南](ASI_LOADER.md)，以下以独立版为例。
-
-两版日志和返程记录互不导入。切换分发前先用原版本完成返程并保存，或准备正常流程地点的存档。
-
-## 兼容版本
-
-| 项目 | 0.6.1 支持范围 |
-| --- | --- |
-| 游戏 | Trails in the Sky 2nd Chapter / 空之轨迹 the 2nd |
-| 平台 | Steam、Windows x64 |
-| 游戏界面版本 | Ver.1.04（标题界面） |
-| EXE 文件版本 | 1.4.0.0（`sora_2nd.exe` 的 Windows 文件属性） |
-| Steam build | 25721473 |
-| 渲染路径 | 原生 Direct3D 11 |
-| 面板语言 | 简体中文、繁体中文、日文、英文、德文、法文、西班牙文、韩文，自动跟随游戏文字语言 |
-| 手柄提示 | Xbox ABXY；Ver.1.04 中的实测范围见兼容性记录 |
-
-`Ver.1.04` 与 `1.4.0.0` 分别来自游戏界面和 EXE 文件属性，本文中指向同一 Steam build 25721473。安装兼容性以完整 EXE SHA-256 为准，不能仅按版本号的位数推断其他构建。
-
-0.6.1 支持的 `sora_2nd.exe` SHA-256：
-
-```text
-cab62e5872222efb2aaf272be47f14263db4e7132ad7df5255db8efbee9959ea
-```
-
-已发布 0.6.0 附件使用旧 build 25386012，EXE SHA-256 为 `d8b2911d1576216bdc22d070550e4f531e105de7ed2981885849669f4acf8aaf`。两个构建的支持范围不能互换；本次已完成与待完成的验证见 [Ver.1.04 兼容性记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/GAME_1_4_0_COMPATIBILITY.md)。
-
-八种语言的文本已包含在独立版 DLL 与 ASI 插件中，不需下载语言包或往游戏目录增加翻译文件。只跟随游戏的**文字语言**，不跟随语音、Steam 客户端或 Windows 语言；八种有效文字语言分别使用各自的界面与原生地点名称。
-
-显示中日韩文字需要本机具备相应 Windows 字体。若出现方框、缺字或字体缺失提示，请安装 Windows 对应的简体中文／繁体中文／日文／韩文补充字体后重启游戏；本项目不捆绑游戏或系统字体。完整说明见 [语言与字体](USAGE.md#语言与字体)。
-
-版本权威来源为 `native/game_version.h`；发行包在 `installer/` 中携带同一份版本定义，安装器与运行时都会检查游戏版本，不匹配时不启用游戏挂钩。手动安装前可使用以下只读命令核对，比较哈希时忽略字母大小写：
-
-```powershell
-Get-FileHash -LiteralPath '你的游戏安装目录\sora_2nd.exe' -Algorithm SHA256
-```
+本文对应 **[0.6.2 Release](https://github.com/blockshy/sky2-chest-tracker/releases/tag/v0.6.2)**，目标游戏为 **Ver.1.05**（EXE **1.5.0.0**，Steam build **26290169**）。0.6.1 附件仅支持 Ver.1.04，不能用于本次补丁。请下载 Release 中的预编译安装包，GitHub 的 **Source code** 包不能直接安装。详细验证状态见 [兼容性记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/GAME_1_5_0_COMPATIBILITY.md)。
 
 ## 开始前
 
-1. 下载 `Sky2ChestTracker-0.6.1-Standalone.zip` 及配套 `.sha256`，核验后完整解压 ZIP。GitHub 的 **Source code** 包只有源码，不能直接安装。
-2. 保存所需进度并正常退出游戏，找到包含 `sora_2nd.exe` 的游戏根目录。
-3. 已有 `xinput1_4.dll` 时先核对来源；未知同名文件不覆盖、不删除。
+1. 保存进度并完全退出游戏。使用全传送时，先完成旧版本的返程，或准备正常流程地点的存档。
+2. 在 Steam 中打开游戏的本地文件，确认该目录包含 `sora_2nd.exe`。支持 Steam Windows x64 与原生 Direct3D 11。
+3. 核对游戏标题界面的版本及 EXE 属性中的文件版本，选择相匹配的 Mod 安装包。安装现成文件无需开发工具或额外语言包。
+4. 完整解压安装包。确认压缩包校验值与对应 `.sha256` 一致；可以在支持 SHA-256 的文件校验工具中比较。保留原安装包用于确认旧文件归属。
+5. 若游戏目录已有 `xinput1_4.dll`，先确认属于本 Mod 还是公共 Loader／其他 Mod，备份到游戏目录外。未知来源文件不要覆盖。
 
-**`dist/` 中全部内容就是需要复制的游戏文件。**文档、脚本和校验资料位于包内其他位置，不复制到游戏，也不生成安装收据 JSON。
+两种分发功能和快捷键相同，**二选一**。Standalone 适合只安装本 Mod；ASI 依赖公共 Loader，为其他 ASI 插件提供共同入口，但不保证所有插件组合兼容。
 
-使用 0.6.1 的配套 `.sha256` 核对下载包；安装器进一步检查 `installer/manifest.json` 的 `exe_sha256` 和载荷哈希。`dist/` 不含 `manifest.json` 或 `install.json`，版本定义和校验资料均留在解压包内。
+## 安装独立版
 
-## 脚本安装、更新与卸载
-
-### 脚本安装
-
-在完整解压的独立版包根目录打开 PowerShell：
-
-```powershell
-.\Install-Mod.ps1 -GamePath '你的游戏安装目录'
-```
-
-脚本检查游戏版本、载荷哈希和目标文件归属；从 Steam 启动后核对宝箱面板。首次安装仅写入 **DLL 与 `Sky2ChestTracker/LICENSES.txt` 两个文件**。
-
-### 脚本更新
-
-退出游戏，在新版完整安装包内运行同一安装命令。脚本使用包内当前清单和历史 SHA-256 白名单识别旧文件，备份被替换的已知文件至解压包的 `backups/` 后更新，保留日志及返程数据。
-
-旧版收据、拆分许可证和说明文件仅在路径、产品与已知内容均可核对时清理；修改过或未知文件保留，目录仅在为空时删除。不凭旧收据中的哈希认领未知 DLL，不递归删除 Mod 目录。只替换脚本不会更新 DLL。
-
-升级游戏不会撤销已发布 DLL 的历史归属白名单。旧版 `revisit-return.dat`、`revisit-history/` 保留，旧 ASI 目录迁移时保持其原始 EXE 指纹。0.6.1 改用 `revisit-return-25721473.dat`、`revisit-history-25721473/`，不自动读取或跨版本执行旧记录，也不改写指纹将其视为新版记录。
-
-### 脚本卸载
-
-```powershell
-.\Uninstall-Mod.ps1 -GamePath '你的游戏安装目录'
-```
-
-只删除确认属于本产品的 DLL 和对应许可；保留存档、日志、返程数据及未知文件。卸载不要求游戏仍为该包支持的版本，官方更新后仍可卸载已知旧 Mod；DLL 已被其他 Mod 替换时停止。
-
-### 先预演，不改文件
-
-安装与卸载均支持 `-WhatIf`：
-
-```powershell
-.\Install-Mod.ps1 -GamePath '你的游戏安装目录' -WhatIf
-.\Uninstall-Mod.ps1 -GamePath '你的游戏安装目录' -WhatIf
-```
-
-预演检查通过不等于游戏内兼容测试。不要同时运行多个安装器或文件替换工具。脚本被执行策略阻止时，可按设备管理规则处理或选择手动安装；本项目不自动修改系统执行策略。
-
-## 手动安装、更新与卸载
-
-### 手动安装
-
-核对游戏版本并退出游戏后，将 **`dist/` 内的全部内容**复制到游戏根目录，不要额外套一层 `dist`：
+将 Standalone 包内 **`dist/` 的全部内容**复制到游戏根目录，不要再套一层 `dist`。初次安装只有两个文件：
 
 ```text
 游戏目录/
-├─ xinput1_4.dll                  独立版宝箱 Mod
+├─ sora_2nd.exe
+├─ xinput1_4.dll                  宝箱 Mod 独立版
 └─ Sky2ChestTracker/
-   └─ LICENSES.txt                项目与第三方完整许可
+   └─ LICENSES.txt               项目与第三方许可
 ```
 
-从 Steam 启动游戏。日志和返程数据运行时按需生成，不需要提前创建，不需要复制安装记录。
+从 Steam 启动游戏，左上角应显示宝箱追踪面板和 `0.6.2`；按 `F7` 可切换显隐。不要同时保留宝箱 `.asi`。
 
-### 更新或卸载前：核对 DLL 归属
+## 安装 ASI 版
 
-```powershell
-Get-FileHash -LiteralPath '你的游戏安装目录\xinput1_4.dll' -Algorithm SHA256
+1. 先按 [Loader 核对说明](ASI_LOADER.md#已有-loader-如何处理) 处理已有入口。无 Loader 时，将公共 Loader 包内 `dist/` 的内容复制到游戏根目录。
+2. 将宝箱 ASI 包内 `dist/` 的内容合并复制到同一游戏根目录，保留其他文件。
+3. 确认结构如下，再从 Steam 启动游戏。初次安装宝箱和 Loader 共四个文件：
+
+```text
+游戏目录/
+├─ sora_2nd.exe
+├─ xinput1_4.dll                       Ultimate ASI Loader
+└─ plugins/
+   ├─ Sky2ChestTracker.asi             宝箱 Mod
+   └─ Sky2ChestTracker/
+      ├─ LICENSES.txt                  宝箱及第三方许可
+      └─ UltimateASILoader.LICENSE.txt  Loader 许可
 ```
 
-将结果与对应版本安装包的 `installer/manifest.json` 中 `sha256`，或当前包 `installer/known-files.json` 中类型为 `standalone-proxy` 的已知条目比较。旧安装包的清单可能位于 `dist/manifest.json`。只使用可信发行包提供的哈希，不凭文件名、版本文本或游戏中的旧收据认领文件。
+Loader 只需安装一次，不随每次宝箱更新重复替换。游戏目录无需复制包内说明和校验清单；日志及返程记录由 Mod 按需生成。
 
-### 手动更新
+## 手动更新
 
-退出游戏并核对归属后，可将旧 DLL 另存到游戏目录外，再合并复制新版 `dist/` 的全部内容，更新 DLL 和 `LICENSES.txt`。保留日志、返程记录及其他文件，不先删除整个数据目录。需要回退时使用保留的旧发行包；恢复旧目录规则前确认其运行数据路径。
+1. 退出游戏，核对旧 DLL／ASI 确实属于本 Mod。需要比对时，使用 SHA-256 校验工具与可信旧包或当前包的 `installer/manifest.json`、`installer/known-files.json` 对应条目比较。
+2. 将旧二进制和对应数据目录备份到游戏目录外。
+3. 合并复制新版包 `dist/` 内的文件，替换已确认属于本 Mod 的二进制和 `LICENSES.txt`。**不要先删除整个数据目录。**
+4. 启动游戏核对面板版本，并确认日志没有 `Unsupported executable`、签名失败或重复加载提示。
 
-如需同时清理旧说明、旧许可证或收据，推荐先用新版脚本的 `-WhatIf` 查看；手动方式仅删除能逐项确认属于本 Mod 的旧文件，未知内容保留。
+更新宝箱 ASI 时保留公共 Loader、Loader 许可及其他插件。游戏补丁改变了 EXE 时，应使用专门适配的构建；仅复制旧 Mod 不会恢复兼容性。
 
-### 手动卸载
+## 手动卸载
 
-退出游戏，核对 DLL 归属后移走 `xinput1_4.dll`；对应的 `Sky2ChestTracker/LICENSES.txt` 可一并移走。保留运行数据及未知文件，不删除整个 `Sky2ChestTracker` 目录。
+| 对象 | 退出游戏后移走 | 保留 |
+| --- | --- | --- |
+| 独立版宝箱 | 已确认归属的根目录 `xinput1_4.dll`、`Sky2ChestTracker/LICENSES.txt` | 日志、返程记录及未知文件 |
+| 宝箱 ASI | `plugins/Sky2ChestTracker.asi`、其数据目录中的 `LICENSES.txt` | 公共 Loader、Loader 许可、其他插件及返程记录 |
+| 公共 Loader | 所有 ASI 均不再依赖它后，移走对应 DLL 与 `UltimateASILoader.LICENSE.txt` | 宝箱历史及其他产品的数据 |
 
-## 手动与脚本混用
+不要删除整个 `plugins/` 或 `Sky2ChestTracker/`。卸载不会撤销已经写入游戏存档的剧情、道具或开箱变化。
 
-| 操作顺序或情况 | 结果 |
+## 切换分发
+
+先完成返程并保存，退出游戏后移走旧宝箱入口，再安装另一分发。两个需要根目录 `xinput1_4.dll` 的入口不能并存，也不能通过随意改名建立加载关系。
+
+从 ASI 切回独立版时，必须先确认其他 ASI 不再依赖公共 Loader；仍需这些插件时继续使用宝箱 ASI。两种分发的数据各自保留，不互相导入。
+
+## 数据与旧版本
+
+| 分发 | 日志与返程数据目录 |
 | --- | --- |
-| 手动复制当前 `dist/` → 脚本卸载或更新 | 支持；按实际文件 SHA-256 识别，不依赖收据 |
-| 脚本安装 → 手动更新 → 脚本卸载 | 使用认识该构建的新版脚本即可 |
-| 只有已知 DLL，缺少许可或旧收据 | DLL 身份仍可识别；安装可补齐缺失的配套许可 |
-| DLL 被替换为未知文件，即使留有本 Mod 收据 | 停止覆盖或删除 |
-| 使用不认识新构建的旧脚本 | 可能拒绝；改用与当前构建配套的新包 |
-| 目录内包含用户文件 | 保留；不因目录名相同而全部清理 |
+| 独立版 | `Sky2ChestTracker/` |
+| ASI | `plugins/Sky2ChestTracker/` |
 
-`installer/manifest.json` 和 `known-files.json` 只留在解压包中，不能通过手改这些文件强行认领其他 Mod。
+Ver.1.05 使用 `revisit-return-26290169.dat` 和 `revisit-history-26290169/`。Ver.1.04 的 `25721473` 文件及更早无构建后缀的记录应原样保留；新版本不读取旧构建的返程记录。不要改名或修改记录指纹。
 
-## 与其他 Mod 共存
-
-**两个需要根目录 `xinput1_4.dll` 的 Mod 不能直接共存。**独立版只转发 Windows 系统 XInput，没有第二份 Mod 的串联功能；改名不会自动建立加载关系。需要多个 ASI 时使用插件版与公共 Loader，详见 [ASI 指南](ASI_LOADER.md)。
-
-文件及父目录为链接、重解析点，或实际文件哈希未知时，脚本停止处理。即使文件名不同，多个 Mod 仍可能竞争游戏挂钩、界面或按键，需分别验证。文件检查不能替代任意并发修改下的事务保证，不要并行操作安装目录。
-
-## 保留哪些文件
-
-| 文件 | 用途 |
-| --- | --- |
-| `Sky2ChestTracker/LICENSES.txt` | 合并后的完整项目及第三方许可，安装时提供 |
-| `Sky2ChestTracker/tracker.log` | 单个诊断日志，运行时生成并限制大小 |
-| `Sky2ChestTracker/revisit-return-25721473.dat` | Ver.1.04 的最近出发点，使用传送后生成 |
-| `Sky2ChestTracker/revisit-history-25721473/` | Ver.1.04 的历次返程记录，更新、卸载和转移游戏时保留 |
-| `Sky2ChestTracker/revisit-return.dat`、`Sky2ChestTracker/revisit-history/` | 旧游戏的历史数据，原样保留，不自动导入新版 |
-
-ASI 的对应数据位于 `plugins/Sky2ChestTracker/`。返程文件不绑定存档栏位，也不保存整份进度，详见 [传送指南](TRAVEL.md)。卸载 Mod 不会撤销已经保存的剧情、道具或开箱变化。
+旧 ASI 数据若位于 `Sky2Mods/Sky2ChestTracker/`，按 [旧数据整理](ASI_LOADER.md#旧数据整理) 备份处理。返程记录不绑定存档栏位，也不是完整游戏存档，详见 [传送指南](TRAVEL.md#返程记录与重启)。

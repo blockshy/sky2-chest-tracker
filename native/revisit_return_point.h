@@ -15,8 +15,8 @@ struct RevisitReturnPoint {
     char scene[32]{};
     uint32_t region = 0;
     uint32_t chapter = 0;
-    uint32_t place = 0;    // 场景根节点的默认地点 ID（原生 field+108 的 +808 数据）。
-    uint32_t mapPlace = 0; // 当前站位地形对应的地点 ID（原生 field+648 指向的 MapData）。
+    uint32_t place = 0;    // 场景根节点的默认地点 ID（field_layout::kSceneRoot 对象的 +0x808 数据）。
+    uint32_t mapPlace = 0; // 当前站位地形对应的地点 ID（field_layout::kMapData 指向的 MapData）。
     // 仅保存当前站立地形 MapData+0x90，兼容既有文件字段；根地点有独立的标识，
     // 不能要求两者相等。实际返程加载只使用场景、坐标和朝向，不把此值传给游戏。
     uint32_t variant = 0;

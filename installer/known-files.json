@@ -192,6 +192,18 @@
       "product": "Sky2ChestTracker",
       "path": "plugins/Sky2ChestTracker.asi",
       "sha256": "aa5430cc3bcee1da0d03158a26c641b5397d87d097f5140edf82f97b78f114fd"
+    },
+    {
+      "type": "standalone-proxy",
+      "product": "Sky2ChestTracker",
+      "path": "xinput1_4.dll",
+      "sha256": "9d95b6012e3e7cf1082a3c3eda2956a4f26675859555afc02bb0f1e99a53ac89"
+    },
+    {
+      "type": "asi-plugin",
+      "product": "Sky2ChestTracker",
+      "path": "plugins/Sky2ChestTracker.asi",
+      "sha256": "fc999189464a8176d055603ed3f79679f75bca9e54799c6c93568fa3f1c5e135"
     }
   ]
 }

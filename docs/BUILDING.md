@@ -1,150 +1,55 @@
-# 构建指南
+# 手动构建与项目结构
 
-本页对应 **0.6.1**，适配游戏 **Ver.1.04**（EXE 文件版本 **1.4.0.0**，Steam build **25721473**），预编译包见 [0.6.1 Release](https://github.com/blockshy/sky2-chest-tracker/releases/tag/v0.6.1)。本次从 0.6.0 继续适配，原有未发布开发提交保留在 `dev`；0.6.0 附件保持原样，仍只支持旧 build 25386012。
+[项目首页](../README.md) · [实现说明](ARCHITECTURE.md) · [测试说明](TESTING.md)
 
-完整构建同时生成独立版与 ASI 插件版，两者默认提供全传送；保留剧情限制的构建仅用于开发对照。本地构建和打包不会自动发布版本，也不会安装 DLL 或修改游戏存档。本次验证范围见 [Ver.1.04 兼容性记录](GAME_1_4_0_COMPATIBILITY.md)。
+当前版本为 **0.6.2**，目标为游戏 **Ver.1.05 / EXE 1.5.0.0 / Steam build 26290169**。现成 Mod 的文件复制见 [安装指南](INSTALLATION.md)，此页面向修改源码的开发者。
 
-## 环境
+## 准备环境
 
-完整 DLL 构建需要 Windows x64、Visual Studio 的“使用 C++ 的桌面开发”工作负载与 Windows SDK、CMake 3.20+、Git、Python 3.10+。
-推荐使用 **PowerShell 7**，并加载 Visual Studio 的 x64 编译环境，确认 `cl`、`ml64`、`cmake`、`ctest`、`nmake` 可用。
-也可在 **x64 Native Tools Command Prompt** 中运行 `pwsh`，继承已经配置好的编译环境。
-生成器和公开 Python 测试只用标准库；玩家安装现成 DLL 不需要这些工具。
+- Windows x64、Visual Studio 的“使用 C++ 的桌面开发”工作负载、Windows SDK 与 MASM。
+- CMake 3.20+、Git；资源处理及公开 Python 测试需要 Python 3.10+。
+- 自己合法安装的受支持游戏。游戏 EXE、资源包、存档和派生目录不纳入仓库。
 
-## 完整构建
+依赖源码放在同一目录下的 `imgui/` 与 `minhook/`，默认根目录为 `.deps/`。固定版本如下，不直接使用上游最新分支：
 
-当前目标是游戏 **Ver.1.04**，Windows 版本资源中的 EXE 文件版本为 **1.4.0.0**，Steam build 为 **25721473**，`sora_2nd.exe` SHA-256 为 `cab62e5872222efb2aaf272be47f14263db4e7132ad7df5255db8efbee9959ea`。`native/game_version.h` 是运行时、目录生成器、构建、打包和安装器共用的技术版本权威来源；不能通过只修改生成目录中的哈希来放行其他游戏构建。标题版本与 EXE 文件版本的来源说明见 [兼容性记录](GAME_1_4_0_COMPATIBILITY.md)。
+| 依赖 | 提交 |
+| --- | --- |
+| Dear ImGui | `420f1793417e39560ca39a4209c55a9f204fde13` |
+| MinHook | `8af6b4acae5a9388fd742b56fa79ece89d96f823` |
 
-```powershell
-git clone https://github.com/blockshy/sky2-chest-tracker.git
-cd sky2-chest-tracker
-py -3 -m venv .venv
-.\tools\Build-Mod.ps1 -GamePath '你的游戏安装目录' -PythonExecutable '.\.venv\Scripts\python.exe'
+## 本机资源目录
+
+完整构建要求 `data/generated/` 中已有与本机 EXE 指纹一致的宝箱、地图、传送及八语名称目录。生成逻辑位于 `tools/`；目录内容只来自本机资源，不能使用他人版本的目录或手改哈希。
+
+| 文件 | 用途 |
+| --- | --- |
+| `chest_catalog.h` | 566 个宝箱身份、旗标及 EXE 指纹 |
+| `map_catalog.h` | 59 个地图分组与宝箱归属 |
+| `travel_catalog.h` | 原生传送目标与地区归属 |
+| `map_localization.h`、`travel_localization.h` | 八种语言的官方地点名称 |
+
+`native/game_version.h` 是当前 EXE、文件版本与 build 的权威来源。运行时、构建和目录指纹必须一致。仅更新这个头文件不能完成新游戏适配；地址、对象字段及脚本资源核验要求见 [兼容性记录](GAME_1_5_0_COMPATIBILITY.md)。
+
+## 手动配置与编译
+
+1. 打开 CMake GUI，源目录选择仓库，构建目录选择独立的空目录。
+2. 选择已安装的 Visual Studio 生成器和 **x64** 平台，设置 `SKY2_DEPS_DIR` 为依赖根目录。
+3. 完整 Mod 构建保持 `SKY2_BUILD_MOD=ON`、`BUILD_TESTING=ON`；正式功能使用 `SKY2_UNRESTRICTED_TRAVEL=ON`，关闭该项仅用于剧情限制策略的开发对照。
+4. 依次执行 Configure、Generate、Open Project。在 Visual Studio 中选择 **Release / x64**，构建 `ALL_BUILD`。
+5. 执行 CTest，确认测试全部通过。两种传送策略有各自测试，不以当前 DLL 的默认策略替代另一种验证。
+
+也可在构建完成后手动执行测试命令：
+
+```text
+ctest --test-dir <构建目录> -C Release --output-on-failure
 ```
 
-构建脚本会依次：
+输出包含 `xinput1_4.dll`（独立版）和 `Sky2ChestTracker.asi`（插件版），两者共用功能对象，仅加载入口不同。二进制位于生成器对应的输出目录，Visual Studio 通常为 `Release/`。
 
-1. 从 `native/game_version.h` 读取适配版本，在下载依赖或访问编译器前校验游戏 EXE 的 SHA-256。
-2. 按 `dependencies.json` 下载并核对 Dear ImGui 和 MinHook 的固定提交，放入被 Git 忽略的 `.deps/`。
-3. 从本机游戏生成 `data/generated/` 下的宝箱、地图及传送目录，同时生成游戏全部八种语言的原生名称表。
-4. 显式配置全传送策略，使用 NMake 与 MSVC 清理重编译，共用 `tracker_runtime` 对象生成 `build-release/xinput1_4.dll` 与 `build-release/Sky2ChestTracker.asi`。
-5. 运行两种传送策略的 CTest 及公开 Python 测试；任何步骤失败都会停止。
+不持有游戏资源时，可在新的构建目录将 `SKY2_BUILD_MOD=OFF`，运行能够构建的公开逻辑测试；这不能证明实际游戏地址、图形界面或手柄兼容。
 
-首次构建需要网络下载开源依赖。已经存在的依赖目录必须处于锁定提交且没有修改；脚本不会覆盖你的本地修改。
-可通过 `-DependencyDirectory` 指定已准备好的依赖父目录，通过 `-BuildDirectory` 指定构建目录；不要与其他项目混用。
+## 交付与本机安装
 
-不经过脚本时，可分别运行：
+手动安装前按 [安装指南](INSTALLATION.md) 备份现有文件，关闭游戏并只保留一个宝箱入口。ASI 需要单独的公共 Loader，依赖版本与许可见 [ASI 与 Loader](ASI_LOADER.md)。不要把诊断探针或游戏派生数据放入玩家安装目录。
 
-```powershell
-.\tools\Setup-Dependencies.ps1
-.\.venv\Scripts\python.exe tools\extract_catalog.py --game '你的游戏安装目录' --out data/generated
-.\.venv\Scripts\python.exe tools\extract_map_catalog.py --game '你的游戏安装目录' --out data/generated
-.\.venv\Scripts\python.exe tools\extract_travel_catalog.py --game '你的游戏安装目录' --out data/generated
-cmake -S . -B build-release -G 'NMake Makefiles' -DCMAKE_BUILD_TYPE=Release -DSKY2_BUILD_MOD=ON -DBUILD_TESTING=ON -DSKY2_UNRESTRICTED_TRAVEL=ON "-DCMAKE_MAKE_PROGRAM=$((Get-Command nmake).Source)"
-cmake --build build-release --clean-first
-ctest --test-dir build-release --output-on-failure
-.\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test_public_*.py' -v
-```
-
-三个生成器单独运行时也会先检查 EXE 指纹；地图生成器额外核对上游 `chests.json` 的指纹。`tracker.cpp` 以编译期断言将生成的 `kExeSha256` 与权威版本绑定，目录过期会导致构建失败；运行时另行校验实际 EXE，再检查挂钩指令与对象身份。不能将新游戏版本生成的哈希当作已适配的证明，运行时地址和布局也必须重新核对。
-目录生成后共有 566 个正式宝箱、59 个统计地图，以及 180 条传送表记录、166 个唯一传送 ID。展示层保留 155 个原生地点，另加迷途之森入口与精确返程，共 157 项。11 个纯内部 ID 不展示。
-原始宝箱行号参与标志计算，不得重新编号；传送表的同 ID 备用入口保留至运行时核对，不应去重为任意一个坐标。生成目录只提供静态数据，不能替代运行时身份检查，也不应提交到仓库。
-
-## 八语资源与界面
-
-现有 `extract_map_catalog.py` 与 `extract_travel_catalog.py` 已接入 `localized_game_names.py`；无需额外生成命令。它们读取玩家本机八种语言表包中的 `t_place.tbl`、`t_mapjump.tbl`，必要时从 `t_notemenu.tbl` 取得面向玩家的地区名称。日语使用 `table.pac`，其他语言分别使用 `table_sc.pac`、`table_en.pac`、`table_tc.pac`、`table_de.pac`、`table_fr.pac`、`table_es.pac`、`table_ko.pac`。
-
-新增生成产物为 `data/generated/map_localization.h`、`travel_localization.h` 和便于核对来源的 `travel_localization.json`；地图八语名称与来源记录在 `maps.json`。这些名称表按固定 `sc/jp/en/tc/de/fr/es/ko` 顺序编入 DLL／ASI，不作为额外文件安装到玩家游戏目录。原始表、生成目录与私人研究资料均不提交。
-
-游戏专名必须通过稳定的地点／传送 ID 和场景关联，不可手写译名、靠外文模糊匹配、按译名排序后重编号，或将内部入口的外文名称误判成新增地点。`native/ui_text.h` 只维护 Mod 自有文案；`native/localized_names.h` 使用生成的原生名称。语言检测在完整 EXE 哈希通过后只读原生文本语言，与语音设置无关，详见 [语言与原生名称](LOCALIZATION.md)。
-
-中日韩字形使用本机 Windows 字体，项目和安装包不携带游戏或 Windows 字体。界面检查机器也需要具备对应字体，否则不能将缺字的截图作为对应语言通过证据。
-
-## 全传送与剧情限制策略
-
-`SKY2_UNRESTRICTED_TRAVEL` 的 CMake 默认值为 `ON`，头文件宏默认值为 `1`。正式构建不以目的地登记、禁用、所属分组或前置剧情作为全传送清单的准入条件，仍要求真实场景、坐标、稳定菜单、二次确认、出发点持久化及必要保护模块通过检查。
-该选项不改变“未到访传送点”探索开关的原生菜单补显规则。功能范围见 [全传送指南](TRAVEL.md)。
-
-需要开发对照时，使用独立目录显式构建剧情限制策略：
-
-```powershell
-.\tools\Build-Mod.ps1 -GamePath '你的游戏安装目录' -PythonExecutable '.\.venv\Scripts\python.exe' -BuildDirectory '.\build-story-restricted' -StoryRestrictedTravel
-```
-
-手动使用 CMake 时，对照构建设置 `-DSKY2_UNRESTRICTED_TRAVEL=OFF`，正式构建设置 `ON`。CMake 缓存会保留既有值，修改选项默认值或省略参数都不会覆盖旧缓存；构建脚本每次显式写入所选策略。
-
-所有测试均显式指定策略，与 DLL 配置独立：原有保守规则、会话和运行时测试使用宏 `0`，名称带 `_unrestricted_tests` 的会话及运行时测试使用宏 `1`。无论 DLL 选择哪个策略，两套现有回归都应通过，不能用正式默认值掩盖保守规则的失败。
-
-## 不持有游戏时运行测试
-
-```powershell
-cmake -S . -B build-tests -DSKY2_BUILD_MOD=OFF
-cmake --build build-tests --config Release
-ctest --test-dir build-tests -C Release --output-on-failure
-python -m unittest discover -s tests -p 'test_public_*.py' -v
-```
-
-此模式不下载 ImGui、MinHook，也不需要 Windows 游戏环境。C++ 核心状态、输入状态机、语言映射和 Python 解析边界测试可以运行；依赖真实目录的用例明确跳过。GitHub Actions 使用此模式，不上传或下载游戏资源。
-语言检测的 Windows 用例使用自行分配的内存验证空指针、不可读页面和非法枚举，不启动游戏；其他平台只运行纯语言映射及文本选择测试。
-Windows x64 + MSVC 下另运行记录文件 I/O、双策略会话和生产 MASM 跳板的 ABI 测试；其他平台不编译 Windows 汇编。
-生产 helper 的合成内存测试随完整 DLL 构建启用，使用测试自行分配的对象，不连接游戏、不读取真实存档、不安装挂钩。
-
-自动验证范围、传送策略负例、两列页脚和导航位置记忆回归见 [测试说明](TESTING.md)。
-实际游戏检查分别见 [探索辅助测试指南](EXPLORATION_TESTING.md)、[全传送指南](TRAVEL.md) 和 [插件共存测试](PLUGIN_TESTING.md)。编译、合成测试及离屏绘制通过不代表所有地点、章节和剧情组合均已实测。
-
-## 准备 Loader 与隔离加载验证
-
-公共 Loader 使用 ThirteenAG 的官方 [Ultimate ASI Loader 9.7.4 x64](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases/tag/v9.7.4)。`loader-dependency.json` 固定上游提交、下载地址、发布 ZIP 与 DLL 的 SHA-256；准备脚本核验两层哈希，仅写入 `.deps/`，不安装或运行 Loader。重命名官方 DLL 不改变其二进制内容；独立 Loader 包保留 MIT 许可。玩家用法见 [ASI 与 Loader 指南](ASI_LOADER.md)。
-
-```powershell
-# 在线准备固定版本；已有匹配文件可直接复用。
-.\tools\Setup-AsiLoader.ps1
-# 离线时指定已下载的官方压缩包，仍执行相同哈希校验。
-.\tools\Setup-AsiLoader.ps1 -ArchivePath '你的下载目录\Ultimate-ASI-Loader-NoPDB_x64.zip'
-```
-
-完整 Windows 构建会生成 `build-release/tests/asi/` 中的隔离宿主、两个最小插件和诊断探针。构建完成后运行：
-
-```powershell
-# 输出目录必须是全新路径；省略该参数时脚本自动创建独立研究目录。
-.\tests\asi\Invoke-LoaderIntegration.ps1 -LoaderPath '.\.deps\ultimate-asi-loader-9.7.4\xinput1_4.dll' -BinaryDirectory '.\build-release\tests\asi' -ChestPluginPath '.\build-release\Sky2ChestTracker.asi' -StandaloneDllPath '.\build-release\xinput1_4.dll'
-```
-
-本次 Ver.1.04 适配通过 29 组 CTest、88 项公开 Python 测试及 10 个真实 UAL 隔离场景，并获得用户实机功能正常确认；证据与未覆盖范围见 [兼容性记录](GAME_1_4_0_COMPATIBILITY.md)。历史流程与旧版结果见 [插件共存验证](PLUGIN_TESTING.md#本轮验证记录)。探针没有第二套界面或输入挂钩，不能据此宣称任意两个 Mod 均兼容。
-
-## 打包
-
-公开发布前应完成完整构建、自动测试和适用范围的实机验证。当前项目版本为 **0.6.1**，以下命令将三种分发分别打包至 `release/v0.6.1/`；0.6.0 的既有附件保留，公共 Loader 仍以独立的 9.7.4 包分发，不能作为独立版 Mod DLL。
-
-```powershell
-# 独立版：根目录代理；Distribution 的默认值也是 Standalone。
-.\tools\Package-Mod.ps1 -Distribution Standalone -DllPath '.\build-release\xinput1_4.dll' -OutputDirectory '.\release\v0.6.1'
-# 插件版：只携带宝箱 ASI，不包含公共 Loader。
-.\tools\Package-Mod.ps1 -Distribution Plugin -DllPath '.\build-release\Sky2ChestTracker.asi' -OutputDirectory '.\release\v0.6.1'
-# 公共加载器：独立包、独立文件归属，使用前一步核验过的官方文件。
-.\tools\Package-Mod.ps1 -Distribution Loader -DllPath '.\.deps\ultimate-asi-loader-9.7.4\xinput1_4.dll' -OutputDirectory '.\release\v0.6.1'
-```
-
-分别输出 `Sky2ChestTracker-0.6.1-Standalone.zip`、`Sky2ChestTracker-0.6.1-ASI.zip`、`Sky2ModLoader-UAL-9.7.4.zip`，上述命令写入 `release/v0.6.1/`，各有同名 `.sha256` 文件。脚本按白名单打包二进制、安装脚本、玩家 README、四份指南（`INSTALLATION.md`、`USAGE.md`、`TRAVEL.md`、`ASI_LOADER.md`）、包内校验清单和许可证；诊断探针、`PLUGIN_TESTING.md` 与开发资料不进入玩家包。
-四份指南位于包内 `docs/`，与 README 互相链接，解压后可离线阅读；它们不在 `dist/` 内，不会复制到游戏目录。
-暂存目录保留在被忽略的 `release/` 中，不要压缩整个工作目录。
-玩家自己的 `revisit-return-25721473.dat`、`revisit-history-25721473/`、旧版固定名称的返程记录、存档、日志和私有研究资料不进入安装包。
-安装更新和卸载均保留用户返程记录，不应在打包或清理脚本中递归清空 Mod 目录。
-
-当前 runtime journal 使用权威版本头中的 EXE 指纹，并以 Steam build 区分活动记录及历史目录。适配 Ver.1.04 的 Mod 不自动读取旧 `revisit-return.dat`／`revisit-history/`；旧内容原样保留，避免跨 EXE 执行，也避免旧记录因不兼容而阻止新版创建新行程。
-
-安装需要解压整个 ZIP。宝箱包根目录 `Install-Mod.ps1` 根据包内类型安装独立版或 ASI；公共 Loader 使用 `installer/Install-Loader.ps1`。手动复制 `dist/` 的全部内容即可；安装脚本、文档及校验清单不在 `dist/` 中，不生成游戏目录收据。手动路径与数据迁移见 [ASI 指南](ASI_LOADER.md)。
-
-每个分发的 `dist/` 恰好两个文件：独立版 DLL＋`Sky2ChestTracker/LICENSES.txt`，插件 ASI＋`plugins/Sky2ChestTracker/LICENSES.txt`，Loader DLL＋`plugins/Sky2ChestTracker/UltimateASILoader.LICENSE.txt`。合并许可逐字保留项目、第三方来源、Dear ImGui、MinHook/HDE 和 ED9ModManager 文本；Loader 的 MIT 许可仍单独管理。
-
-包内 `installer/manifest.json` 使用 schema 2，包含 `type`、`product`、`version`、`path`、`sha256`、`exe_sha256` 以及两项 `files`；`installer/known-files.json` 使用 schema 1，提供历史路径、哈希、产品和类型供识别及旧资料清理。它们只属于安装包，不能复制进游戏作为新的归属凭证。
-
-打包器检查 Mod 二进制是否内嵌当前支持的 EXE 指纹，拒绝将旧 DLL／ASI 标成新游戏兼容包；官方 Loader 仍以其上游 DLL 哈希核验。`installer/game_version.h` 是权威头的原样副本，`installer/Get-GameVersion.ps1` 供离线安装器读取；版本配置和脚本不进入游戏载荷。PowerShell 脚本保留 UTF-8 BOM，以兼容 Windows PowerShell 5.1。
-
-发布前核对 `exe_sha256`、载荷哈希与 ZIP 校验文件；本地打包不会自动上传 GitHub。语言文本和原生名称已编入二进制，不新增玩家安装文件；包内不携带诊断探针或运行时数据。
-
-## 构建一致性
-
-项目显式声明本地头文件依赖，发布构建仍使用 `--clean-first`。
-更改输入状态机或传送策略等头文件后，核对对应 DLL 源文件确实重新编译，不能只凭独立测试程序通过就认定发布 DLL 已更新。
-生成目录、编译时间和工具链差异可能改变 DLL 哈希；每个安装包的 manifest 记录该包的实际 DLL 哈希。
+发行包只保留对应二进制、许可、玩家说明及校验资料。更新 `LICENSES.txt` 时保留项目和全部第三方许可；公共 Loader 继续保留自身 MIT 许可。构建和整理本机文件不会自动提交、推送或发布 GitHub Release。

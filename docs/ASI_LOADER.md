@@ -1,179 +1,52 @@
-# ASI 插件与公共 Loader 使用指南
+# ASI 与公共 Loader
 
-[项目首页](../README.md) · [独立版安装](INSTALLATION.md) · [操作说明](USAGE.md) · [全传送与精确返程](TRAVEL.md)
+[项目首页](../README.md) · [手动安装、更新与卸载](INSTALLATION.md) · [操作指南](USAGE.md)
 
-本文对应 **0.6.1**，下载见 [0.6.1 Release](https://github.com/blockshy/sky2-chest-tracker/releases/tag/v0.6.1)，适配游戏 Ver.1.04（EXE 文件版本 1.4.0.0）；完整兼容版本见 [安装指南](INSTALLATION.md#兼容版本)。ASI 版由公共 Loader 加载，安装后根目录只增加 `xinput1_4.dll` 与 `plugins/` 两项。0.6.0 附件保留供旧游戏使用。
+宝箱 ASI 与独立版功能相同，区别是由公共 Loader 加载 `plugins/Sky2ChestTracker.asi`。具体文件复制与卸载步骤统一见安装指南；本文只说明 Loader 来源、已有入口和数据处理。
 
-## 目录
+## Loader 来源
 
-- [选择安装包](#选择安装包)
-- [Loader 来源与校验](#loader-来源与校验)
-- [安装前与旧版迁移](#安装前与旧版迁移)
-- [脚本安装更新与卸载](#脚本安装更新与卸载)
-- [手动安装更新与卸载](#手动安装更新与卸载)
-- [文件与返程记录](#文件与返程记录)
-- [切回独立版](#切回独立版)
-- [故障排查与兼容范围](#故障排查与兼容范围)
+使用 ThirteenAG 的 [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader)。本项目核验的版本为 **9.7.4 x64**，以根目录 `xinput1_4.dll` 加载插件，公共包为 `Sky2ModLoader-UAL-9.7.4.zip`。
 
-## 选择安装包
-
-| 安装包 | 用途 | 需要搭配 |
-| --- | --- | --- |
-| `Sky2ChestTracker-0.6.1-Standalone.zip` | 独立版宝箱入口 | 无需 Loader，见 [独立版安装](INSTALLATION.md) |
-| `Sky2ChestTracker-0.6.1-ASI.zip` | 宝箱 ASI 插件 | 公共 Loader |
-| `Sky2ModLoader-UAL-9.7.4.zip` | 公共 Loader，本包没有宝箱功能 | ASI 插件 |
-
-**宝箱独立版与 ASI 版二选一，功能和快捷键一致。**通常安装“ASI 包＋Loader 包”，不要同时放置两个宝箱入口，不要把独立版 DLL 改名成 ASI，也不要放置多个宝箱 ASI 副本。
-
-公共 Loader 可以加载多个 ASI，但不负责协调插件的游戏挂钩、界面和输入，不保证任意组合兼容。
-
-## Loader 来源与校验
-
-**Ultimate ASI Loader（UAL）由 ThirteenAG 开发维护，是独立开源项目。**本项目原样分发官方 **v9.7.4、Windows x64、NoPDB** 二进制，只将上游 `dinput8.dll` 改名为本游戏采用的 `xinput1_4.dll`。[官方仓库](https://github.com/ThirteenAG/Ultimate-ASI-Loader) · [官方 v9.7.4 发布页](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases/tag/v9.7.4)
-
-UAL 采用 [MIT 许可证](https://github.com/ThirteenAG/Ultimate-ASI-Loader/blob/v9.7.4/license)，安装后原文位于 `plugins/Sky2ChestTracker/UltimateASILoader.LICENSE.txt`。这份文件由 **Loader** 管理，即使卸载宝箱 ASI，只要 Loader 还在就应保留；宝箱的非商业许可不改变 UAL 许可。
-
-固定 SHA-256 如下。第一项是**上游官方 ZIP**；本项目重新打包的 ZIP 另附 `.sha256`：
+已核验 Loader DLL 的 SHA-256：
 
 ```text
-官方 Ultimate-ASI-Loader-NoPDB_x64.zip
-e5860e7d9a1805267535b65749575b5e406cc6ea3325c7392189c578815045d1
-
-官方 DLL（本游戏使用名 xinput1_4.dll）
 031a3e5576d91dce1e438d36b9a3d462c7334ab4791990a8ff1e3ddc0e132daf
 ```
 
-```powershell
-Get-FileHash -LiteralPath '你的游戏安装目录\xinput1_4.dll' -Algorithm SHA256
-```
+Loader 是独立的 MIT 开源项目；本 Mod 的非商业许可不改变它的许可。安装后保留对应 `UltimateASILoader.LICENSE.txt`。已有兼容 Loader 时不必随宝箱更新替换它。
 
-下载地址、上游提交和校验值记录在 [loader-dependency.json](https://github.com/blockshy/sky2-chest-tracker/blob/main/loader-dependency.json)。未知版本或位数须另行验证，不以文件名作为身份依据。
+## 已有 Loader 如何处理
 
-## 安装前与旧版迁移
-
-先核对 [支持的游戏构建](INSTALLATION.md#兼容版本)，保存进度并退出游戏。首次从独立版切换时，先完成原版本的返程，或准备正常流程地点的存档；ASI 不读取独立版的出发点和历史。
-
-| 现有安装 | 处理方式 |
+| 当前情况 | 处理 |
 | --- | --- |
-| 没有根目录代理 | 先安装 Loader，再安装宝箱 ASI |
-| 已知发行版的独立版 DLL | 由 Loader 安装脚本核对已知 SHA 后切换（支持 0.5.0 与旧 0.6.0）；原独立版运行数据保留 |
-| 已有固定官方 9.7.4 x64 UAL | 文件哈希匹配即可识别，无需本项目旧收据；补齐 Loader 许可后安装 ASI |
-| 来源不明的同名 DLL | 停止，先核对其他 Mod 的安装方式 |
-| 旧 0.6.0 ASI 数据在 `Sky2Mods/Sky2ChestTracker/` | 按下文迁移现有 ASI 数据后继续使用 |
+| 根目录没有 `xinput1_4.dll` | 安装公共 Loader 后，再安装宝箱 ASI |
+| 已有本项目核验的 UAL 9.7.4 x64 | 保留 Loader，只添加或更新宝箱 ASI |
+| 已有宝箱独立版 DLL | 先移走独立版，再安装 Loader 和宝箱 ASI |
+| 已有其他来源的 Loader 或同名 DLL | 先核对来源、版本与依赖；备份后按其自身说明处理，不直接覆盖 |
 
-游戏 Ver.1.04 请使用 **0.6.1** 包及配套 `.sha256`，不要继续安装旧 0.6.0。安装器检查 `installer/manifest.json` 中的 `exe_sha256` 与载荷哈希；`dist/` 只有实际安装文件，版本定义和清单留在解压包中。
+只保留一个宝箱入口，也检查 `plugins/`、`scripts/`、`update/` 中是否有旧副本。公共 Loader 解决入口加载问题，不能协调不同 Mod 的绘制、输入或相同函数挂钩。
 
-旧 ASI 目录迁移规则：
+## 旧数据整理
 
-- 更新时保留现有已知宝箱 ASI，直接运行新版安装脚本，不必先卸载。脚本识别到现有插件后，将旧 `Sky2Mods/Sky2ChestTracker/` 中的 `tracker.log`、`revisit-return.dat`、`revisit-history/*.dat` 迁移至 `plugins/Sky2ChestTracker/`，不导入独立版 `Sky2ChestTracker/`。
-- 新旧同名数据一致时可以去重；内容不一致则停止，保留两份供核对，不覆盖返程记录。
-- 手动更新时，在启动新版之前自行移动上述 ASI 数据，保持历史文件名和相对目录。新目录已有不同内容时先核对，不选择覆盖。
-- 旧收据、拆分许可和文档仅按已知内容清理；未知或修改过的文件保留，空目录才删除。运行时不会自行扫描或合并旧目录。
+当前 ASI 数据目录为 `plugins/Sky2ChestTracker/`，独立版为根目录 `Sky2ChestTracker/`，两者不共享数据。
 
-上述旧文件迁移保持原始内容和 EXE 指纹。0.6.1 改用 `revisit-return-25721473.dat` 和 `revisit-history-25721473/`，不自动读取或跨版本执行旧固定路径中的记录；迁移不表示旧历史已适配新游戏。
+若此前 ASI 使用 `Sky2Mods/Sky2ChestTracker/`：
 
-## 脚本安装更新与卸载
+1. 退出游戏，将整个旧数据目录备份到游戏目录外。
+2. 将需要保存的日志与返程历史复制到新 ASI 数据目录；遇到同名文件先比较，保留两份备份，不覆盖来源不明的数据。
+3. 确认备份完整后，只清理能够确认属于旧 ASI 的文件，保留其他 Mod 内容。
 
-### 安装
-
-先在 **Loader 包根目录**打开 PowerShell：
-
-```powershell
-.\installer\Install-Loader.ps1 -GamePath '你的游戏安装目录'
-```
-
-再在 **ASI 包根目录**运行：
-
-```powershell
-.\Install-Mod.ps1 -GamePath '你的游戏安装目录'
-```
-
-安装共写入四个文件：Loader、宝箱 ASI、宝箱合并许可、Loader 许可。脚本和指南留在解压包内，不生成游戏目录收据。启动游戏后应只有一份宝箱面板。
-
-### 更新
-
-在新版完整 **ASI 包**中运行同一安装命令。脚本按实际 SHA-256 识别旧二进制，备份被替换的已知文件至解压包 `backups/` 后更新，保留插件数据和公共 Loader。只有更新脚本而不更新 `.asi` 不会更新功能。
-
-Loader 单独维护，只接受已核验的官方二进制，不用随宝箱每次更新。来源相同且字节一致的手动安装不需要补造收据。
-
-### 卸载
-
-在 **ASI 包根目录**运行：
-
-```powershell
-.\Uninstall-Mod.ps1 -GamePath '你的游戏安装目录'
-```
-
-仅删除可核对属于宝箱的 ASI 与合并许可，保留公共 Loader、Loader 许可、其他插件、日志和返程数据。即使宝箱已卸载，`plugins/Sky2ChestTracker/` 也可能因 Loader 许可或数据而保留。
-
-确认全部 ASI 已移出且不再需要 Loader 后，在 **Loader 包根目录**单独运行：
-
-```powershell
-.\installer\Uninstall-Loader.ps1 -GamePath '你的游戏安装目录'
-```
-
-脚本核对依赖、二进制与许可归属，仍有 ASI 或无法安全检查目录时停止。所有命令均支持追加 `-WhatIf` 预演，不要并行运行多个安装器。
-
-## 手动安装更新与卸载
-
-手动方式与脚本方式安装后的结构一致，无需维护任何 JSON 收据。
-
-| 操作 | 手动步骤 |
-| --- | --- |
-| 安装 Loader | 核对无冲突后，将 Loader 包 `dist/` 的全部内容复制到游戏根目录 |
-| 安装宝箱 ASI | 将 ASI 包 `dist/` 的全部内容合并复制到游戏根目录，保留其他插件 |
-| 更新 ASI | 核对旧文件 SHA，按前述规则先迁移旧 ASI 数据，再合并复制新版 `dist/` |
-| 卸载 ASI | 核对归属后移走 `plugins/Sky2ChestTracker.asi` 与宝箱 `LICENSES.txt`；保留 Loader 许可和数据 |
-| 卸载 Loader | 所有插件不再依赖它后，核对并移走根目录 Loader DLL 及对应 `UltimateASILoader.LICENSE.txt` |
-
-可用 `Get-FileHash -Algorithm SHA256` 将实际二进制与可信包内 `installer/manifest.json` 或 `installer/known-files.json` 的相应产品、类型、路径条目比较。旧包的清单可能在 `dist/manifest.json`。未知同名文件不覆盖、不删除。
-
-完整手动安装后可使用脚本更新或卸载；使用认识当前构建的新包即可。旧收据不能认领未知文件。不要把 `dist` 本身复制成额外目录，也不要删除整个 `plugins` 或插件数据目录。
-
-## 文件与返程记录
-
-安装后结构如下，日志和返程数据按需生成：
-
-```text
-游戏目录/
-├─ xinput1_4.dll                      公共 Loader
-└─ plugins/
-   ├─ Sky2ChestTracker.asi            宝箱插件
-   └─ Sky2ChestTracker/
-      ├─ LICENSES.txt                宝箱完整合并许可
-      ├─ UltimateASILoader.LICENSE.txt
-      │                             Loader 完整许可
-      ├─ tracker.log                 运行日志
-      ├─ revisit-return-25721473.dat  Ver.1.04 当前返程记录
-      └─ revisit-history-25721473/    Ver.1.04 返程历史
-         └─ <记录编号>.dat
-```
-
-初次安装四个文件；运行日志使用单文件并限制大小，返程历史按出发记录生成。文档、脚本和安装校验资料均不进入游戏目录。独立版仍使用根目录 `Sky2ChestTracker/`，两版不共享数据；旧 ASI 数据只是同一分发的路径迁移。
-
-返程记录不绑定存档栏位，也不能回滚游戏进度。切档、重启后须核对地点和时间，详见 [传送指南](TRAVEL.md#返程记录与重启)。
-
-## 切回独立版
-
-1. 在 ASI 版完成当前返程并保存，或准备正常流程地点的存档，然后退出游戏。
-2. 卸载宝箱 ASI，保留两版运行数据。
-3. 先移走其他 ASI，确认其他 Mod 不再依赖 Loader 后将其卸载。仍需其他插件时，继续使用宝箱 ASI。
-4. 按 [独立版安装](INSTALLATION.md) 安装 Standalone 包，保留唯一宝箱入口。
-
-独立版重新使用原 `Sky2ChestTracker/`，不读取插件历史；保留旧历史不等于与当前存档相符，返程前仍要核对。
+移动文件不会改变兼容范围。Ver.1.05 只读取 `26290169` 构建的返程记录，旧 `25721473` 及无后缀记录继续保留；不要通过改名或改指纹让旧记录参与新游戏的返程。
 
 ## 故障排查与兼容范围
 
-| 情况 | 先检查 |
+| 现象 | 检查 |
 | --- | --- |
-| 只有 Loader，没有面板 | 是否安装 `.asi`，再按 F7／View + B 检查显隐 |
-| 脚本提示未知哈希 | 核对文件来源，并使用对应新版安装包；不要篡改校验清单 |
-| 更新后看不到返程历史 | Ver.1.04 按游戏 build 单独保存；旧游戏记录保留但不自动导入，独立版历史也不导入 |
-| 数据迁移提示冲突 | 保留两边数据，核对各自地点和时间，不覆盖 |
-| 重复加载提示 | 检查 `plugins`、`scripts`、`update` 等目录，只保留一个宝箱入口 |
-| Loader 无法卸载 | 仍有 ASI、链接目录或无法确认内容，先核对依赖 |
-| 加入其他插件后异常 | 分别单独运行定位，反馈版本及相关日志 |
+| 有 Loader 但没有面板 | 是否安装 `.asi`，是否按 `F7` 隐藏了面板，插件日志是否生成 |
+| 游戏补丁后失效 | 游戏 build 是否与 Mod 相符，日志是否提示不支持的 EXE |
+| 重复加载提示 | 独立版与 ASI 是否同时存在，其他加载目录是否还有宝箱副本 |
+| 返程历史为空 | 当前游戏构建及分发的数据目录是否一致；旧构建记录不自动导入 |
+| 加入其他 Mod 后异常 | 退出游戏，备份并移走其他 Mod，仅保留本插件复测 |
 
-本次通过 10 个 UAL 隔离加载场景，并获得用户在游戏 Ver.1.04 中功能正常的实机确认；不代表任意两个界面或输入 Mod 兼容。探针不进入玩家包，具体证据与边界见 [Ver.1.04 兼容性记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/GAME_1_4_0_COMPATIBILITY.md)，历史流程见 [插件共存验证](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/PLUGIN_TESTING.md)。
-
-反馈时附分发、版本、游戏构建、步骤及 `plugins/Sky2ChestTracker/tracker.log` 的相关片段，无需公开整份存档或返程文件。
+日志位置为 `plugins/Sky2ChestTracker/tracker.log`。当前构建的实测状态见 [Ver.1.05 兼容性记录](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/GAME_1_5_0_COMPATIBILITY.md)，隔离加载测试的能力边界见 [插件验证说明](https://github.com/blockshy/sky2-chest-tracker/blob/main/docs/PLUGIN_TESTING.md)。

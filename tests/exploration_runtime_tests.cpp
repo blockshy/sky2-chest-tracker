@@ -16,10 +16,10 @@ void ObserveRevisitNativeRules(uintptr_t) noexcept {}
 }
 
 namespace {
-constexpr size_t kFlagsGlobalOffset = 0xC61368;
+constexpr size_t kFlagsGlobalOffset = 0xC624A8;
 constexpr size_t kSyntheticImageSize = 0xD00000;
-constexpr uintptr_t kMapCallerOffset = 0x3F1BED;
-// 合成映像采用 1.4.0.0 已核对的 RVA；旧版调用点仅作为拒绝样本，验证升级后
+constexpr uintptr_t kMapCallerOffset = 0x3F27AD;
+// 合成映像采用 1.5.0.0 已核对的 RVA；旧版调用点仅作为拒绝样本，验证升级后
 // 不会继续把旧返回地址当作已完成剧情脚本或直接地图区块调用的证明。
 
 struct TestResult {
@@ -106,7 +106,7 @@ struct TravelFixture {
         Put(manager, 0xC8, reinterpret_cast<uintptr_t>(areas.data())); Put(manager, 0xD0, uint64_t{2});
         Put(manager, 0xF8, region);
         Global(kFlagsGlobalOffset, reinterpret_cast<uintptr_t>(flags.data()));
-        Global(0xC5DC88, reinterpret_cast<uintptr_t>(tableRoot.data()));
+        Global(0xC5EDC8, reinterpret_cast<uintptr_t>(tableRoot.data()));
         Put(tableRoot, 0xF0, reinterpret_cast<uintptr_t>(tableHolder.data()));
         Put(tableHolder, 8, reinterpret_cast<uintptr_t>(tableFile.data()));
         Put(tableFile, 0x10, reinterpret_cast<uintptr_t>(tableBuffer.data()));
@@ -118,7 +118,7 @@ struct TravelFixture {
         Put(tableHeaders, 0x9C, uint32_t{3});
         for (unsigned i = 0; i < 3; ++i) StaticSpot(i, spots[i].id, spots[i].region, spots[i].area);
         for (unsigned i = 0; i < 2; ++i) StaticArea(i, areas[i].id, areas[i].region);
-        Global(0xC61318, reinterpret_cast<uintptr_t>(sceneRoot.data()));
+        Global(0xC62458, reinterpret_cast<uintptr_t>(sceneRoot.data()));
         SetFlag(6000 + id, false); SetFlag(6500 + id, false);
         tracker::g_explorationBase = image;
         tracker::g_travelUnlock.store(true);
@@ -126,7 +126,7 @@ struct TravelFixture {
     }
 
     void VerifyCall(TestResult& result, uint32_t spotMask, uint32_t areaMask, const char* label,
-                    uintptr_t callerOffset = 0x3DB2D8, bool legacyRegistration = false) {
+                    uintptr_t callerOffset = 0x3DBE98, bool legacyRegistration = false) {
         const auto beforeManager = manager; const auto beforeFlags = flags;
         const auto beforeSpots = spots; const auto beforeAreas = areas;
         const auto beforeRoot = tableRoot; const auto beforeHolder = tableHolder;
@@ -211,10 +211,10 @@ void TestTravel(TestResult& result, uintptr_t image, uintptr_t inaccessible) {
     reject("非零分组候选在无分组数组时拒绝", [&] { Put(f.manager, 0xD0, uint64_t{0}); });
     reject("不可读点位数组由SEH拒绝", [&] { Put(f.manager, 0xE0, inaccessible); });
     reject("不可读分组数组由SEH拒绝", [&] { Put(f.manager, 0xC8, inaccessible); });
-    reject("不可读静态表根对象由SEH拒绝", [&] { f.Global(0xC5DC88, inaccessible); });
+    reject("不可读静态表根对象由SEH拒绝", [&] { f.Global(0xC5EDC8, inaccessible); });
     reject("不可读静态表缓冲区由SEH拒绝", [&] { Put(f.tableFile, 0x10, inaccessible); });
     reject("不可读静态表头由SEH拒绝", [&] { Put(f.tableFile, 0x20, inaccessible); });
-    reject("不可读场景对象由SEH拒绝", [&] { Put(f.sceneRoot, 0x648, inaccessible); });
+    reject("不可读场景对象由SEH拒绝", [&] { Put(f.sceneRoot, 0x640, inaccessible); });
     reject("静态表步长不匹配拒绝", [&] { Put(f.tableHeaders, 0x98, uint32_t{151}); });
     reject("静态表为空拒绝", [&] { Put(f.tableHeaders, 0x9C, uint32_t{0}); });
     reject("静态表数量异常拒绝", [&] { Put(f.tableHeaders, 0x9C, uint32_t{1025}); });
@@ -253,26 +253,26 @@ void TestTravel(TestResult& result, uintptr_t image, uintptr_t inaccessible) {
 
 void TestTravelBuild(TestResult& result, uintptr_t image, uintptr_t inaccessible) {
     TravelFixture f(image);
-    for (uintptr_t caller : {uintptr_t{0x3DB2D8}, uintptr_t{0x3DB851}, uintptr_t{0x3DBBFA}}) {
+    for (uintptr_t caller : {uintptr_t{0x3DBE98}, uintptr_t{0x3DC411}, uintptr_t{0x3DC7BA}}) {
         f.Reset(); f.VerifyCall(result, 1, 1, "三个完整原生脚本后的构建调用源均许可补显", caller);
     }
-    for (uintptr_t caller : {uintptr_t{0}, uintptr_t{0x29F4D7}, uintptr_t{0x3DB2D7}, uintptr_t{0x3DB2D9}}) {
+    for (uintptr_t caller : {uintptr_t{0}, uintptr_t{0x2A0047}, uintptr_t{0x3DB2D7}, uintptr_t{0x3DB2D9}}) {
         f.Reset(); f.VerifyCall(result, 0, 0, "初始化、未知及相邻错误调用地址不得补显", caller);
     }
     for (uintptr_t caller : {uintptr_t{0x3DAA88}, uintptr_t{0x3DB001}, uintptr_t{0x3DB3AA}}) {
         f.Reset(); f.VerifyCall(result, 0, 0, "旧版构建返回地址不得取得新版补显许可", caller);
     }
     f.Reset(); tracker::g_travelExplicitBuild = true;
-    f.VerifyCall(result, 1, 1, "显式刷新同步许可允许非原生调用地址完成统一评估", 0x29F4D7);
+    f.VerifyCall(result, 1, 1, "显式刷新同步许可允许非原生调用地址完成统一评估", 0x2A0047);
     tracker::g_travelExplicitBuild = false;
     f.Reset(); tracker::g_travelExplicitBuild = true; tracker::g_travelUnlock.store(false);
-    f.VerifyCall(result, 0, 0, "显式同步许可不能绕过功能关闭", 0x29F4D7);
+    f.VerifyCall(result, 0, 0, "显式同步许可不能绕过功能关闭", 0x2A0047);
     tracker::g_travelExplicitBuild = false;
     f.Reset(); f.VerifyCall(result, 0, 0, "旧登记后桥仅为ABI兼容，不提前补显未完成剧情计算的数据", 0, true);
     f.spots[0].blocked = 1;
     f.VerifyCall(result, 0, 0, "原生后续设置的最终灰态始终优先");
     f.Reset();
-    result.Check(!tracker::Sky2BeforeBuildTravel(inaccessible, image + 0x3DB2D8),
+    result.Check(!tracker::Sky2BeforeBuildTravel(inaccessible, image + 0x3DBE98),
                  "不可读管理器保持原生构建执行，不进入部分修改");
 }
 

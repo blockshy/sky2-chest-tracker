@@ -1,4 +1,5 @@
-// 仅适配已经核对 SHA-256 的游戏 1.03.2。回访通过原生菜单退出结果交接，
+#include "field_layout.h"
+// 仅适配已经核对 SHA-256 的游戏 Ver.1.05。回访通过原生菜单退出结果交接，
 // 不在渲染线程调用换图，也不写角色坐标、章节、到访记录或存档。
 #include "revisit_native.h"
 #include "revisit_catalog.h"
@@ -44,7 +45,7 @@ LoadDescriptor beforeLoadDescriptor{};
 RevisitReturnPoint beforeLoadPosition{};
 bool beforeLoadPositionValid=false;
 // 此入口只在最终原生菜单消费者线程调用。测试可以替换为自己的记录器，
-// 正式构建由安装时绑定到已验证的 29CF90，不暴露给外部模块。
+// 正式构建由安装时绑定到已验证的 29E140，不暴露给外部模块。
 using NativeLoad = void (*)(uintptr_t, const char*, const char*, const float*, float, uint32_t);
 NativeLoad nativeLoad = nullptr;
 ULONGLONG requestedAt = 0;
@@ -153,7 +154,7 @@ bool ReadPlaceIdentity(uintptr_t address, PlaceIdentity& result) noexcept {
 bool ReadPlaceRows(uintptr_t& rows,uint32_t& count) noexcept {
     uintptr_t owner=0,holder=0,file=0,buffer=0,headers=0;
     uint32_t index=0,offset=0,stride=0;
-    if (!Read(base+0xC5DC88,owner) || !Read(owner+0x60,holder) || !Read(holder+8,file) ||
+    if (!Read(base+0xC5EDC8,owner) || !Read(owner+0x60,holder) || !Read(holder+8,file) ||
         !Read(file+0x10,buffer) || !Read(file+0x20,headers) || !Read(file+0x2C,index) || index>1024) return false;
     const uintptr_t header=headers+static_cast<uintptr_t>(index)*0x50;
     if (!Read(header+0x44,offset) || offset>0x1000000 || !Read(header+0x48,stride) || stride!=0xA8 ||
@@ -367,10 +368,10 @@ RevisitNativeContext Capture(uintptr_t expectedMinimap = 0) noexcept {
     uint8_t specialEvent = 0,rootValid=0;
     std::array<uint8_t, 4096> storyFlags{};
     PlaceIdentity rootIdentity{},currentIdentity{};
-    if (!base || !Read(base+0xC61318,field) || !Read(field+0x1BC8,pending)) return fail(CaptureIssue::Field);
+    if (!base || !Read(base+0xC62458,field) || !Read(field+field_layout::kLoadBusy,pending)) return fail(CaptureIssue::Field);
     result.transitionActive=pending!=0;
-    if (!ReadScene(field+0x170,result.scene) || !Read(field+0x648,scene) ||
-        !Read(field+0x108,root) || !Read(root+0xE77,rootValid) || rootValid!=1 ||
+    if (!ReadScene(field+field_layout::kSceneName,result.scene) || !Read(field+field_layout::kMapData,scene) ||
+        !Read(field+field_layout::kSceneRoot,root) || !Read(root+0xE77,rootValid) || rootValid!=1 ||
         !ReadPlaceIdentity(root+0x808,rootIdentity) || !ReadPlaceIdentity(scene,currentIdentity) ||
         std::strcmp(rootIdentity.scene,result.scene) || std::strcmp(currentIdentity.scene,result.scene)) return fail(CaptureIssue::Scene);
     result.place=rootIdentity.id;result.mapPlace=currentIdentity.id;
@@ -380,7 +381,7 @@ RevisitNativeContext Capture(uintptr_t expectedMinimap = 0) noexcept {
         (!forest::MatchesPlace(rootIdentity.id,rootIdentity.region,rootIdentity.variant,rootIdentity.scene) ||
          !forest::MatchesPlace(currentIdentity.id,currentIdentity.region,currentIdentity.variant,currentIdentity.scene)))
         return fail(CaptureIssue::PlaceTable);
-    if (!Read(base+0xC61368, savedata) || !Read(savedata+0x10B, specialEvent) ||
+    if (!Read(base+0xC624A8, savedata) || !Read(savedata+0x10B, specialEvent) ||
         !Read(savedata+0x11100+12*4, chapter) ||
         (chapter >> 30) != 1 || !ReadBytes(savedata+0x100, storyFlags.data(), storyFlags.size())) return fail(CaptureIssue::Story);
     result.chapter = chapter & 0x3FFFFFFFu;
@@ -391,9 +392,9 @@ RevisitNativeContext Capture(uintptr_t expectedMinimap = 0) noexcept {
     result.forestStoryComplete=forest::StoryComplete(result.chapter,storyFlags.data(),storyFlags.size());
     result.region=ResolveSceneRegion(result.chapter,result.scene,currentIdentity.region,rootIdentity.region);
     if (!result.region) return fail(CaptureIssue::Region);
-    // 29CF90在旗标93为真时使用事件专用换图参数；首版只接受普通自由行动分支。
+    // 29E140在旗标93为真时使用事件专用换图参数；首版只接受普通自由行动分支。
     result.busy = pending != 0 || (specialEvent & 0x20) != 0;
-    if (!Read(field+0x730,minimap) || (expectedMinimap && minimap!=expectedMinimap) ||
+    if (!Read(field+field_layout::kMinimap,minimap) || (expectedMinimap && minimap!=expectedMinimap) ||
         !Read(minimap+0x28,menu)) return fail(CaptureIssue::Minimap);
     result.prologueCompleted = true;
     for (uint32_t flag : completedFlags) {
@@ -447,9 +448,9 @@ RevisitNativeContext Capture(uintptr_t expectedMinimap = 0) noexcept {
     }
     uintptr_t fieldAgain = 0, savedataAgain = 0, sceneAgain = 0;
     uint32_t chapterAgain = 0;
-    if (!Read(base+0xC61318, fieldAgain) || fieldAgain != field ||
-        !Read(base+0xC61368, savedataAgain) || savedataAgain != savedata ||
-        !Read(field+0x648, sceneAgain) || sceneAgain != scene ||
+    if (!Read(base+0xC62458, fieldAgain) || fieldAgain != field ||
+        !Read(base+0xC624A8, savedataAgain) || savedataAgain != savedata ||
+        !Read(field+field_layout::kMapData, sceneAgain) || sceneAgain != scene ||
         !Read(savedata+0x11100+12*4, chapterAgain) || chapterAgain != chapter) return fail(CaptureIssue::Changed);
     result.valid = result.region >= 1 && result.region <= 9 && result.chapter <= 9;
     CaptureRules(minimap,result,currentIdentity.variant);
@@ -556,11 +557,11 @@ bool CapturePoint(const RevisitNativeContext& context, RevisitReturnPoint& outpu
     uint8_t rootValid=0,variant=0; uint32_t pending=1;
     RevisitReturnPoint point{}; float quaternion[4]{};
     pointIssue=2;
-    if (!Read(base+0xC61318,field) || !Read(field+0x648,mapData) || !Read(field+0x108,root) ||
+    if (!Read(base+0xC62458,field) || !Read(field+field_layout::kMapData,mapData) || !Read(field+field_layout::kSceneRoot,root) ||
         !Read(root+0xE77,rootValid) || rootValid!=1 || !Read(root+0x808,point.place) ||
         !Read(mapData,point.mapPlace) || !Read(mapData+0x90,variant)) return false;
     pointIssue=3;
-    if (!Read(field+0x660,player) || !Read(player,vtable) || vtable!=base+0xB05D18 ||
+    if (!Read(field+field_layout::kPlayer,player) || !Read(player,vtable) || vtable!=base+0xB06F78 ||
         !Read(player+0x60,actor) || !ReadBytes(actor+0xE8,point.xyz,sizeof(point.xyz)) ||
         !ReadBytes(actor+0x108,quaternion,sizeof(quaternion))) return false;
     pointIssue=4;if (!QuaternionYaw(quaternion,point.yawRadians)) return false;
@@ -571,9 +572,9 @@ bool CapturePoint(const RevisitNativeContext& context, RevisitReturnPoint& outpu
     uintptr_t fieldAgain=0,actorAgain=0,sceneAgain=0;
     char sceneName[32]{};
     pointIssue=5;
-    if (!Read(base+0xC61318,fieldAgain) || fieldAgain!=field || !Read(field+0x648,sceneAgain) || sceneAgain!=mapData ||
-        !Read(player+0x60,actorAgain) || actorAgain!=actor || !Read(field+0x1BC8,pending) || pending ||
-        !ReadScene(field+0x170,sceneName) || std::strcmp(sceneName,point.scene)) return false;
+    if (!Read(base+0xC62458,fieldAgain) || fieldAgain!=field || !Read(field+field_layout::kMapData,sceneAgain) || sceneAgain!=mapData ||
+        !Read(player+0x60,actorAgain) || actorAgain!=actor || !Read(field+field_layout::kLoadBusy,pending) || pending ||
+        !ReadScene(field+field_layout::kSceneName,sceneName) || std::strcmp(sceneName,point.scene)) return false;
     pointIssue=6;if (!ValidateReturnTable(point)) return false;
     output=point;pointIssue=0;return true;
 }
@@ -599,8 +600,8 @@ bool SamePoseValues(const float* a,float aYaw,const float* b,float bYaw,float to
 }
 LoadDescriptor ReadLoadDescriptor() noexcept {
     LoadDescriptor result{};uintptr_t field=0;
-    if (!Read(base+0xC61318,field) || !ReadScene(field+0x194,result.scene) ||
-        !ReadBytes(field+0x1BA8,result.xyz,sizeof(result.xyz)) || !Read(field+0x1BB8,result.yaw) ||
+    if (!Read(base+0xC62458,field) || !ReadScene(field+field_layout::kPendingScene,result.scene) ||
+        !ReadBytes(field+field_layout::kLoadPosition,result.xyz,sizeof(result.xyz)) || !Read(field+field_layout::kLoadYaw,result.yaw) ||
         !std::isfinite(result.yaw) || std::fabs(result.yaw)>6.284f) return result;
     for (float value:result.xyz) if (!std::isfinite(value) || std::fabs(value)>=100000) return result;
     result.valid=true;return result;
@@ -654,9 +655,9 @@ bool ValidateDestination(uint32_t target, RevisitReturnPoint* arrival = nullptr)
     uintptr_t owner=0, holder=0, file=0, buffer=0, headers=0, field=0, scene=0;
     uint32_t index=0, offset=0, stride=0, count=0;
     uint8_t variant=0;
-    if (!Read(base+0xC5DC88, owner) || !Read(owner+0xF0, holder) || !Read(holder+8, file) ||
+    if (!Read(base+0xC5EDC8, owner) || !Read(owner+0xF0, holder) || !Read(holder+8, file) ||
         !Read(file+0x10, buffer) || !Read(file+0x20, headers) || !Read(file+0x2C, index) || index>1024 ||
-        !Read(base+0xC61318, field) || !Read(field+0x648, scene) || !Read(scene+0x90, variant)) return false;
+        !Read(base+0xC62458, field) || !Read(field+field_layout::kMapData, scene) || !Read(scene+0x90, variant)) return false;
     const uintptr_t header=headers+static_cast<uintptr_t>(index)*0x50;
     if (!Read(header+0x44, offset) || offset>0x1000000 || !Read(header+0x48, stride) || stride!=0x98 ||
         !Read(header+0x4C, count) || !count || count>1024) return false;
@@ -698,7 +699,7 @@ bool ValidateDestination(uint32_t target, RevisitReturnPoint* arrival = nullptr)
         // 普通跨地区入口126–135的row.region是菜单显示归属，落地却在另一地区。
         // 到达归属取真实地点表，并应用同一严格scene地区规则，不沿用显示分组号。
         uintptr_t savedata=0,rows=0;uint32_t chapter=0,placeCount=0,resolved=0;
-        if (!Read(base+0xC61368,savedata) || !Read(savedata+0x11100+12*4,chapter) ||
+        if (!Read(base+0xC624A8,savedata) || !Read(savedata+0x11100+12*4,chapter) ||
             (chapter>>30)!=1 || !ReadPlaceRows(rows,placeCount)) return false;
         for (uint32_t i=0;i<placeCount;++i) {
             uint32_t id=0;const auto row=rows+static_cast<uintptr_t>(i)*0xA8;
@@ -841,7 +842,7 @@ bool BeforeJump(uintptr_t field, uint32_t target, uintptr_t caller) noexcept {
         pending=status; expected=expectedContext; startedAt=requestedAt; armed=dispatchArmed;
         returnPoint=requestedReturn;
     }
-    const bool consumer=caller==base+0x299CB4 || caller==base+0x299CCF;
+    const bool consumer=caller==base+0x29A854 || caller==base+0x29A86F;
     if (!consumer || !armed || pending.target!=target) return false;
     const auto context=Capture();
     RevisitReturnPoint dispatchPosition{};
@@ -859,7 +860,7 @@ bool BeforeJump(uintptr_t field, uint32_t target, uintptr_t caller) noexcept {
     bool safe=pending.phase==RevisitNativePhase::ClosingMap && GetTickCount64()-startedAt<=5000 &&
         context.available && !context.busy &&
         SameContext(context,expected) && RevisitNativeTargetAvailable(target,context) && destinationValid &&
-        Read(base+0xC61318,realField) && realField==field && Read(field+0x730,minimap) &&
+        Read(base+0xC62458,realField) && realField==field && Read(field+field_layout::kMinimap,minimap) &&
         Read(minimap+0x28,menu) && !menu && Read(minimap+0x310,resultId) && resultId==target &&
         Read(minimap+0x314,resultKind) && resultKind==1 && permission && permission(target,context,pending.token);
     if (safe) {
@@ -879,7 +880,7 @@ bool BeforeJump(uintptr_t field, uint32_t target, uintptr_t caller) noexcept {
         // 不能因minimap未赋值而把旧result=1留给原生下一帧无限重试。
         uintptr_t liveMinimap=0, liveMenu=1;
         uint32_t liveId=0, liveKind=0;
-        if (Read(field+0x730,liveMinimap) && liveMinimap==handoffMinimapIdentity &&
+        if (Read(field+field_layout::kMinimap,liveMinimap) && liveMinimap==handoffMinimapIdentity &&
             Read(liveMinimap+0x28,liveMenu) && !liveMenu &&
             Read(liveMinimap+0x310,liveId) && liveId==target &&
             Read(liveMinimap+0x314,liveKind) && liveKind==1) {
@@ -910,7 +911,7 @@ bool BeforeJump(uintptr_t field, uint32_t target, uintptr_t caller) noexcept {
         // 4001 保留普通落地和 MapJumpAfterCallScript；同场景使用原生 20 分支。
         const uint32_t loadFlags=0x4001u|(std::strcmp(context.scene,goal.scene)==0?0x20u:0u);
         const int32_t noSpot=-1;
-        if (!Write(field+0x1BD4,noSpot)) {
+        if (!Write(field+field_layout::kTargetSpot,noSpot)) {
             SetPhase(pending.token,RevisitNativePhase::Rejected);
         } else {
             const bool previousTrip=ExperimentalRevisitTripActive(context.chapter);
@@ -918,9 +919,9 @@ bool BeforeJump(uintptr_t field, uint32_t target, uintptr_t caller) noexcept {
                 SetExperimentalRevisitTripActive(!returning,context.chapter);
             nativeLoad(field,goal.scene,nullptr,goal.xyz,goal.yawRadians,loadFlags);
             uint32_t busy=0;
-            // 29CF90 是 void，不能把“函数返回”当作加载成功。它同步设置繁忙位；
+            // 29E140 是 void，不能把“函数返回”当作加载成功。它同步设置繁忙位；
             // 没有观察到此交接时保留返程记录，由玩家重试，绝不立即确认到达。
-            const bool accepted=Read(field+0x1BC8,busy) && busy!=0;
+            const bool accepted=Read(field+field_layout::kLoadBusy,busy) && busy!=0;
             if constexpr (revisit_policy::kUnrestricted)
                 if (!accepted) SetExperimentalRevisitTripActive(previousTrip,context.chapter);
             std::lock_guard<std::mutex> lock(stateMutex);
@@ -1160,7 +1161,7 @@ bool BeforeRevisitNativeBrowse(uintptr_t menu) noexcept {
     // 返程审核目标场景。实验策略明确略过这层剧情许可，仍保留上述运行条件和
     // 真实目标数据核对；两种策略都不会调用旧传送剧情来伪造剧情完成状态。
     // 直接提交普通结果并正常关闭，不伪造display对象、不倒退章节。状态8略过的
-    // MapJumpVoice只涉及跨海拔淡出/语音，实际换图淡出仍由29CF90完整状态机执行。
+    // MapJumpVoice只涉及跨海拔淡出/语音，实际换图淡出仍由29E140完整状态机执行。
     const uint64_t result=static_cast<uint64_t>(pending.target)|(1ull<<32);
     const int32_t closeState=17;
     // 原有选择仍指向有效原生显示数组；退出状态不再读取它。保留选择可以确保任何
@@ -1188,8 +1189,9 @@ bool BeforeRevisitNativeBrowse(uintptr_t menu) noexcept {
 
 void InstallRevisitNative(uintptr_t gameBase) noexcept {
     base=gameBase;
-    // Steam Build 25721473（EXE 1.4.0.0）已分别核对原生更新、结果消费、换图、
-    // 坐标保存/恢复完整指令链：对象字段与调用约定不变，代码段并非统一平移。
+    // Steam Build 26290169（EXE 1.5.0.0）已分别核对原生更新、结果消费、换图、
+    // 坐标保存/恢复完整指令链：调用约定及 Actor 布局不变，场景管理器字段已
+    // 按 field_layout.h 更新；加载状态编号也有变化，不直接操作原生状态队列。
     // saveYaw 内的相对调用位移也属于签名；不能仅替换下面的入口 RVA。
     // 不只核对挂钩入口：结果复制、最终消费者和换图函数同时验证，防止版本/其它
     // 补丁改变交接约定。本适配失败时只禁用回访，现有宝箱/探索功能仍可使用。
@@ -1203,7 +1205,7 @@ void InstallRevisitNative(uintptr_t gameBase) noexcept {
         0x48,0x89,0x5C,0x24,0x20,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57
     };
     const unsigned char consume[]={
-        0x40,0x57,0x48,0x83,0xEC,0x20,0x48,0x63,0x81,0xEC,0x00,0x00,0x00,0x48,0x8B,0xF9
+        0x40,0x57,0x48,0x83,0xEC,0x20,0x48,0x63,0x81,0xE4,0x00,0x00,0x00,0x48,0x8B,0xF9
     };
     const unsigned char copy[]={
         0x48,0x8B,0x82,0xC0,0x03,0x00,0x00,0x48,0x89,0x87,0x10,0x03,0x00,0x00
@@ -1221,24 +1223,24 @@ void InstallRevisitNative(uintptr_t gameBase) noexcept {
     };
     const unsigned char saveYaw[]={
         0x48,0x8D,0x90,0x08,0x01,0x00,0x00,0x4C,0x8D,0x45,0xA7,0x48,0x8D,0x4D,0x97,0xE8,
-        0xD1,0x82,0xC2,0xFF,0xF3,0x0F,0x10,0x4D,0x9F,0xF3,0x0F,0x10,0x45,0x97,0xE8,0xDA,
-        0x72,0x46,0x00
+        0x21,0x77,0xC2,0xFF,0xF3,0x0F,0x10,0x4D,0x9F,0xF3,0x0F,0x10,0x45,0x97,0xE8,0x7A,
+        0x73,0x46,0x00
     };
     const unsigned char loadPosition[]={
-        0xF3,0x0F,0x10,0x96,0xA8,0x1B,0x00,0x00,0xF3,0x0F,0x11,0x90,0xD8,0x00,0x00,0x00
+        0xF3,0x0F,0x10,0x96,0xA0,0x1B,0x00,0x00,0xF3,0x0F,0x11,0x90,0xD8,0x00,0x00,0x00
     };
     const unsigned char resolvePlace[]={
-        0xE8,0xCA,0x60,0x00,0x00,0x48,0x89,0x86,0x48,0x06,0x00,0x00
+        0xE8,0xCA,0x60,0x00,0x00,0x48,0x89,0x86,0x40,0x06,0x00,0x00
     };
-    if (!Matches(base+0x3D7140,update) || !Matches(base+0x29D4B0,jump) ||
-        !Matches(base+0x29D5D0,load) || !Matches(base+0x299BD0,consume) ||
-        !Matches(base+0x3D7219,copy) || !Matches(base+0x3E8F00,close) ||
-        !Matches(base+0x2E0EC0,actorGetter) || !Matches(base+0x439AEF,savePosition) ||
-        !Matches(base+0x439B2B,saveYaw) || !Matches(base+0x29F696,loadPosition) || !Matches(base+0x29F891,resolvePlace)) {
+    if (!Matches(base+0x3D7D00,update) || !Matches(base+0x29E020,jump) ||
+        !Matches(base+0x29E140,load) || !Matches(base+0x29A770,consume) ||
+        !Matches(base+0x3D7DD9,copy) || !Matches(base+0x3E9AC0,close) ||
+        !Matches(base+0x2E1A20,actorGetter) || !Matches(base+0x43A6AF,savePosition) ||
+        !Matches(base+0x43A6EB,saveYaw) || !Matches(base+0x2A0206,loadPosition) || !Matches(base+0x2A0401,resolvePlace)) {
         Log("Revisit: native adapter validation failed."); return;
     }
-    void* updateTarget=reinterpret_cast<void*>(base+0x3D7140);
-    void* jumpTarget=reinterpret_cast<void*>(base+0x29D4B0);
+    void* updateTarget=reinterpret_cast<void*>(base+0x3D7D00);
+    void* jumpTarget=reinterpret_cast<void*>(base+0x29E020);
     if (MH_CreateHook(updateTarget,reinterpret_cast<void*>(&Sky2RevisitUpdateShim),&Sky2NextRevisitUpdate)!=MH_OK) return;
     if (MH_CreateHook(jumpTarget,reinterpret_cast<void*>(&Sky2RevisitJumpShim),&Sky2NextRevisitJump)!=MH_OK) {
         MH_RemoveHook(updateTarget); return;
@@ -1247,7 +1249,7 @@ void InstallRevisitNative(uintptr_t gameBase) noexcept {
         MH_DisableHook(updateTarget); MH_DisableHook(jumpTarget);
         MH_RemoveHook(updateTarget); MH_RemoveHook(jumpTarget); return;
     }
-    nativeLoad=reinterpret_cast<NativeLoad>(base+0x29D5D0);
+    nativeLoad=reinterpret_cast<NativeLoad>(base+0x29E140);
     available.store(true);
     Log("Revisit: chapter 0-9 native map-result and guarded exact-position return adapter ready.");
 }

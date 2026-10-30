@@ -6,7 +6,7 @@
 
 namespace tracker {
 
-// 原生资源语言表（受支持 EXE 的 RVA 0xAA5F30）按以下顺序排列：
+// 原生资源语言表（受支持 EXE 的 RVA 0xAA6F30）按以下顺序排列：
 // jp、en、de、fr、es、tc、sc、ko。不要把 Mod 自身的 Language 枚举当成原生编号。
 // 八种有效游戏语言均有独立界面与名称资源，不把繁体中文或其他语言合并到回退项。
 // 返回 false 表示无效/未初始化的数据，此时保持 output 原值，由调用方保留上一语言。

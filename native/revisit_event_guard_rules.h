@@ -6,9 +6,9 @@
 #include <string_view>
 
 namespace tracker::revisit_eventguard {
-// 只承认已通过完整 EXE 校验的 Build 25721473 原生 TBoxProcess 唯一调用点。
+// 只承认已通过完整 EXE 校验的 Build 26290169 原生 TBoxProcess 唯一调用点。
 // 此处保存的是 call 后的返回地址，不是脚本启动函数入口；汇编桥据此限定调用来源。
-inline constexpr uintptr_t kTBoxStartReturnRva = 0x2E1DAC;
+inline constexpr uintptr_t kTBoxStartReturnRva = 0x2E290C;
 inline constexpr uint32_t kIntegerTag = 0x40000000;
 inline constexpr uint32_t kEighthChapter = kIntegerTag | 8u;
 inline constexpr uint32_t kNinthChapter = kIntegerTag | 9u;

@@ -19,6 +19,7 @@ PWSH = shutil.which('pwsh')
 PS51 = Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
 EXE_HASH = read_game_version()['exe_sha256']
 PREVIOUS_EXE_HASH = read_game_version()['previous_exe_sha256']
+LEGACY_EXE_HASH = read_game_version()['legacy_exe_sha256']
 LOADER_HASH = '031a3e5576d91dce1e438d36b9a3d462c7334ab4791990a8ff1e3ddc0e132daf'
 PAYLOADS = {'standalone-proxy': b'synthetic chest proxy', 'asi-plugin': b'synthetic chest ASI', 'asi-loader': b'synthetic verified UAL'}
 OLD = {'standalone-proxy': b'synthetic previous proxy', 'asi-plugin': b'synthetic previous ASI'}

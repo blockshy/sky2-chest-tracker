@@ -42,11 +42,11 @@ struct Fixture {
         tracker::g_forestBase=Address(image); tracker::g_forestInstalled.store(true);
         tracker::g_testExperimentalTrip=false;
         tracker::g_testExperimentalChapter=UINT32_MAX;tracker::g_testObservedChapter=UINT32_MAX;
-        Put(image,0xC61318,Address(field)); Put(image,0xC61368,Address(save));
-        std::memcpy(field.data()+0x170,"mp0081",7); Put(field,0x190,uint32_t{6});
+        Put(image,0xC62458,Address(field)); Put(image,0xC624A8,Address(save));
+        std::memcpy(field.data()+0x168,"mp0081",7); Put(field,0x188,uint32_t{6});
         // 刻意使用加载期 busy 状态且无玩家、主地图、脚下地点，验证不会漏掉首次 Reinit。
-        Put(field,0x1BC8,uint32_t{0x4001});
-        Put(field,0x260,Address(objects)); Put(field,0x268,uint64_t{2});
+        Put(field,0x1BC0,uint32_t{0x4001});
+        Put(field,0x258,Address(objects)); Put(field,0x260,uint64_t{2});
         Put(objects,0,Address(ordinary)); Put(objects,sizeof(uintptr_t),Address(event));
         std::memcpy(event.data()+0x10,name,std::strlen(name)+1);
         std::memcpy(ordinary.data()+0x10,"Treasure00",11);
@@ -64,7 +64,41 @@ struct Fixture {
         const auto old=stack; Run(); Check(stack==old,label);
     }
 };
+// 直接调用安装器实际使用的只读验证路径。RVA 和片段来自 Ver.1.05 的独立
+// 静态核验，不能用生产常量填充假映像，否则入口常量遗漏升级时测试也会误通过。
+static void CheckNativeLayout() {
+    std::vector<uint8_t> image(0x500000);
+    const uint8_t entry[]={
+        0x40,0x57,0x48,0x83,0xEC,0x20,0x48,0x8B,0xFA,0x8B,0x52,0x70,0x85,0xD2,0x74,0x1C,
+        0x48,0x63,0x4F,0x64,0x48,0x8B,0x47,0x58,0x8B,0x44,0x01,0xFC,0x8B,0xC8
+    };
+    std::memcpy(image.data()+0x49F640,entry,sizeof(entry));
+    const uint8_t operation[]={
+        0x49,0x8B,0x09,0x48,0x85,0xC9,0x74,0x3A,0x8B,0x81,0xE8,0x01,0x00,0x00,0x85,0xDB,
+        0x74,0x18,0x83,0xE0,0xFD,0x89,0x81,0xE8,0x01,0x00,0x00,0x48,0x8B,0x5C,0x24,0x30,
+        0x48,0x83,0xC4,0x20,0x5F,0xE9,0x21,0xF4,0xDD,0xFF,0x83,0xC8,0x02,0x89,0x81,0xE8,
+        0x01,0x00,0x00,0x48,0x8B,0x5C,0x24,0x30,0x48,0x83,0xC4,0x20,0x5F,0xE9,0x09,0xF4,
+        0xDD,0xFF
+    };
+    std::memcpy(image.data()+0x49F755,operation,sizeof(operation));
+    const uint8_t sceneCommit[]={
+        0x0F,0x10,0x86,0x8C,0x01,0x00,0x00,0x0F,0x11,0x86,0x68,0x01,0x00,0x00,0x0F,0x10,
+        0x8E,0x9C,0x01,0x00,0x00,0x0F,0x11,0x8E,0x78,0x01,0x00,0x00,0x8B,0x86,0xAC,0x01,
+        0x00,0x00,0x89,0x86,0x88,0x01,0x00,0x00
+    };
+    std::memcpy(image.data()+0x29BEF6,sceneCommit,sizeof(sceneCommit));
+    Check(tracker::ValidateForestNativeLayout(Address(image)),"Ver.1.05 forest install signatures accepted");
+    // 新入口为空但旧入口有完全相同的片段，也不能按旧地址安装。
+    std::memcpy(image.data()+0x49EA80,entry,sizeof(entry));
+    image[0x49F640]^=0xFF;
+    Check(!tracker::ValidateForestNativeLayout(Address(image)),"previous forest entry never substitutes current entry");
+    image[0x49F640]^=0xFF;
+    image[0x29BEF6+39]^=0xFF;
+    Check(!tracker::ValidateForestNativeLayout(Address(image)),"complete scene commit displacement is validated");
+}
+
 int main() {
+    CheckNativeLayout();
     using namespace tracker;
     std::vector<std::string> names={"EV_Start","EV_04_34_00","EV_04_34_01"};
     for (unsigned i=0;i<=11;++i) { char n[32]{}; std::snprintf(n,sizeof(n),"EV_WrongWay_%02u",i); names.emplace_back(n); }
@@ -82,15 +116,15 @@ int main() {
     for (const char* name : {"ActiveVoice","Treasure00","go_mp0000","EV_Hint_00","EV_Hint_26","EV_Start_extra"}) {
         Fixture f(name); f.ExpectUnchanged("unreviewed event and ordinary chest unaffected");
     }
-    { Fixture f; Put(f.field,0x1BC8,uint32_t{0}); f.Run(); Check(f.Argument()==0x40000000,"post-load reinit equally guarded"); }
+    { Fixture f; Put(f.field,0x1BC0,uint32_t{0}); f.Run(); Check(f.Argument()==0x40000000,"post-load reinit equally guarded"); }
     { Fixture f("EV_Start",4); f.ExpectUnchanged("normal chapter-four puzzle untouched"); }
     { Fixture f; g_forestInstalled.store(false); f.ExpectUnchanged("uninstalled helper never writes"); }
     for (unsigned flag : {20064u,20067u}) {
         Fixture f; f.save[0x100+flag/8]&=static_cast<uint8_t>(~(1u<<(flag%8)));
         f.ExpectUnchanged("each completion gate is required");
     }
-    { Fixture f; std::memcpy(f.field.data()+0x170,"mp0000",7); f.ExpectUnchanged("same event name in another scene untouched"); }
-    { Fixture f; Put(f.field,0x190,uint32_t{7}); f.ExpectUnchanged("inconsistent scene length denied"); }
+    { Fixture f; std::memcpy(f.field.data()+0x168,"mp0000",7); f.ExpectUnchanged("same event name in another scene untouched"); }
+    { Fixture f; Put(f.field,0x188,uint32_t{7}); f.ExpectUnchanged("inconsistent scene length denied"); }
     { Fixture f; Put(f.context,0x70,uint32_t{3}); f.ExpectUnchanged("unknown builtin arity denied"); }
     { Fixture f; Put(f.context,0x64,int32_t{4}); f.ExpectUnchanged("stack top underflow denied"); }
     { Fixture f; Put(f.context,0x64,int32_t{-4}); f.ExpectUnchanged("negative stack top denied"); }
@@ -103,8 +137,8 @@ int main() {
     { Fixture f; Put(f.stack,0x1C,uint32_t{0xC0000000}); f.ExpectUnchanged("null name offset denied"); }
     { Fixture f; Put(f.stack,0x1C,uint32_t{0xC1000000}); f.ExpectUnchanged("unbounded name offset denied"); }
     { Fixture f; std::memset(f.bytes.data()+0x30,'x',64); f.ExpectUnchanged("unterminated name denied"); }
-    { Fixture f; Put(f.field,0x268,uint64_t{0}); f.ExpectUnchanged("cleared old scene object list denied"); }
-    { Fixture f; Put(f.field,0x268,uint64_t{4097}); f.ExpectUnchanged("unbounded object list denied"); }
+    { Fixture f; Put(f.field,0x260,uint64_t{0}); f.ExpectUnchanged("cleared old scene object list denied"); }
+    { Fixture f; Put(f.field,0x260,uint64_t{4097}); f.ExpectUnchanged("unbounded object list denied"); }
     { Fixture f; std::memcpy(f.event.data()+0x10,"OtherBox",9); f.ExpectUnchanged("name must identify registered current object"); }
     { Fixture f; Put(f.objects,sizeof(uintptr_t),uintptr_t{0}); f.ExpectUnchanged("null registered object denied"); }
     // 新实例模拟重读旧图存档：没有活动回访会话或上次进程内状态，完成门槛仍能保护初始化。

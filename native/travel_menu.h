@@ -1,6 +1,6 @@
 // 传送菜单的即时刷新适配层。此文件只在 exploration.cpp 的 tracker 命名空间内包含。
 // 所有游戏函数均由原生地图输入更新线程调用；渲染/输入线程只提交 TravelRefreshState 请求。
-// 这里的偏移及 ABI 仅适用于主模块已经核对完整 SHA-256 的游戏 1.4.0.0。
+// 这里的偏移及 ABI 仅适用于主模块已经核对完整 SHA-256 的游戏 1.5.0.0。
 // 逐函数指令对照确认运行时对象字段和原生筛选流程不变；全局地址通过 RIP 引用核对，
 // 四种列表／回调虚表通过 RTTI 类型身份分别定位，数据段不得套用代码的平移量。
 #pragma once
@@ -131,14 +131,14 @@ static bool ReadTravelTable(uintptr_t file, uintptr_t buffer, uintptr_t headers,
 static bool ReadTravelTables(NativeTravelTables& tables) noexcept {
     uintptr_t owner = 0, holder = 0, file = 0, buffer = 0, headers = 0, sceneRoot = 0, scene = 0;
     uint32_t sceneType = 0;
-    if (!Read(g_explorationBase + 0xC5DC88, owner) || owner < 0x10000 ||
+    if (!Read(g_explorationBase + 0xC5EDC8, owner) || owner < 0x10000 ||
         !Read(owner + 0xF0, holder) || holder < 0x10000 || !Read(holder + 8, file) || file < 0x10000 ||
         !Read(file + 0x10, buffer) || buffer < 0x10000 ||
         !Read(file + 0x20, headers) || headers < 0x10000 ||
         !ReadTravelTable(file, buffer, headers, 0x28, 0x38, tables.areas) ||
         !ReadTravelTable(file, buffer, headers, 0x2C, 0x98, tables.spots) ||
-        !Read(g_explorationBase + 0xC61318, sceneRoot) || sceneRoot < 0x10000 ||
-        !Read(sceneRoot + 0x648, scene) || (scene && !Read(scene + 0x98, sceneType))) return false;
+        !Read(g_explorationBase + 0xC62458, sceneRoot) || sceneRoot < 0x10000 ||
+        !Read(sceneRoot + field_layout::kMapData, scene) || (scene && !Read(scene + 0x98, sceneType))) return false;
     tables.specialScene = scene && sceneType == 6;
     return true;
 }
@@ -198,11 +198,11 @@ static bool ReadTravelList(uintptr_t object, uintptr_t menu, bool areaList,
                            TravelListView& result) noexcept {
     uintptr_t vtable = 0, owner = 0, callback = 0, callbackTable = 0, callbackCode = 0, callbackOwner = 0;
     if (object < 0x10000 || !Read(object, vtable) ||
-        vtable != g_explorationBase + (areaList ? 0xB0DCF0 : 0xB0DC90) ||
+        vtable != g_explorationBase + (areaList ? 0xB0EF70 : 0xB0EF10) ||
         !Read(object + 0xF8, owner) || owner != menu || !Read(object + 0x138, callback) ||
-        !Read(callback, callbackTable) || callbackTable != g_explorationBase + 0xB0DC20 ||
+        !Read(callback, callbackTable) || callbackTable != g_explorationBase + 0xB0EE68 ||
         !Read(callback + 8, callbackCode) ||
-        callbackCode != g_explorationBase + (areaList ? 0x3EBA60 : 0x3EBB20) ||
+        callbackCode != g_explorationBase + (areaList ? 0x3EC620 : 0x3EC6E0) ||
         !Read(callback + 0x10, callbackOwner) || callbackOwner != menu) return false;
     result.object = object;
     if (!Read(object + 0x38, result.items) || !Read(object + 0x40, result.count) ||
@@ -213,7 +213,7 @@ static bool ReadTravelList(uintptr_t object, uintptr_t menu, bool areaList,
 static bool ListDisplay(const TravelListView& list, uint64_t index, uintptr_t& display) noexcept {
     uintptr_t item = 0, vtable = 0;
     return index < list.count && Read(list.items + index * 8, item) && Read(item, vtable) &&
-        vtable == g_explorationBase + 0xB0DD60 && Read(item + 0x28, display);
+        vtable == g_explorationBase + 0xB0EFE0 && Read(item + 0x28, display);
 }
 static bool ListIdentity(const TravelListView& list, const TravelDisplayRange& range,
                          TravelDisplayIdentity& identity) noexcept {
@@ -240,7 +240,7 @@ static bool ReadTravelMenu(uintptr_t menu, TravelMenuContext& context) noexcept 
         !Read(context.manager + 0xF8, context.region) || context.region < 1 || context.region > 9 ||
         !Read(context.manager + 0x104, context.scale) || !std::isfinite(context.scale) ||
         context.scale < 0.001f || context.scale > 100.0f ||
-        !Read(g_explorationBase + 0xC61368, context.savedata) || context.savedata < 0x10000) return false;
+        !Read(g_explorationBase + 0xC624A8, context.savedata) || context.savedata < 0x10000) return false;
     context.state = frames[context.depth * 3];
     // 仅接受正常浏览栈：3；3→4；3→5；3→4→5。确认、加载、退出及切图一律延期。
     if (frames[0] != 3 || frames[1] != 3 || context.state < 3 || context.state > 5 ||
@@ -298,7 +298,7 @@ static bool RunTravelScript(const TravelMenuContext& context) noexcept {
     const uintptr_t frame = context.menu + 0xB8 + static_cast<uintptr_t>(context.depth) * 12;
     return Read(context.manager + 0x28, reverse) && reverse == context.menu &&
         Read(context.menu + 8, manager) && manager == context.manager &&
-        Read(g_explorationBase + 0xC61368, savedata) && savedata == context.savedata &&
+        Read(g_explorationBase + 0xC624A8, savedata) && savedata == context.savedata &&
         Read(context.manager + 0xF8, region) && region == context.region &&
         Read(context.menu + 0xE8, depth) && depth == context.depth &&
         Read(frame, current) && current == context.state && Read(frame + 4, next) && next == context.state &&
@@ -494,31 +494,54 @@ extern "C" bool Sky2BeforeMapRefresh(uintptr_t menu) noexcept {
 }
 
 static bool InstallTravelRefresh(uintptr_t base) noexcept {
-    const unsigned char script[] = {0x40,0x53,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xEC,0x58,0x48,0x8B,0x05};
-    const unsigned char display[] = {0x48,0x8B,0xC4,0x48,0x89,0x58,0x10,0x48,0x89,0x70,0x18,0x48,0x89,0x78,0x20,0x55};
-    const unsigned char listBuild[] = {0x48,0x8B,0xC4,0x48,0x89,0x58,0x10,0x48,0x89,0x68,0x18,0x48,0x89,0x70,0x20,0x57};
-    const unsigned char listClear[] = {0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x6C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57};
-    const unsigned char listSelect[] = {0x48,0x89,0x5C,0x24,0x18,0x55,0x48,0x83,0xEC,0x30,0x8B,0x41,0x40,0x41,0x0F,0xB6};
-    const unsigned char areaCallback[] = {0x40,0x53,0x48,0x83,0xEC,0x20,0x48,0x8B,0x81,0xC0,0x01,0,0,0x33,0xD2,0x48};
-    const unsigned char spotCallback[] = {0x40,0x53,0x48,0x83,0xEC,0x20,0x48,0x8B,0x81,0xC8,0x01,0,0,0x48,0x8B,0xD9};
-    const unsigned char browse[] = {0x40,0x55,0x53,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8D,0x6C,0x24,0xD1,0x48,0x81,0xEC,0xA8,0,0,0};
-    const unsigned char spots[] = {0x48,0x8B,0xC4,0x48,0x89,0x58,0x18,0x48,0x89,0x68,0x20,0x56,0x57,0x41,0x54,0x41};
-    const unsigned char areas[] = {0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x6C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48};
-    const unsigned char close[] = {0x40,0x53,0x48,0x83,0xEC,0x30,0x48,0x63,0x81,0xEC,0,0,0,0x48,0x8B,0xD9};
-    if (!Matches(base+0x4CCCE0, script) || !Matches(base+0x3D52C0, display) ||
-        !Matches(base+0x3DFB80, listBuild) || !Matches(base+0x3DEFE0, listBuild) ||
-        !Matches(base+0x526650, listClear) || !Matches(base+0x526A30, listSelect) ||
-        !Matches(base+0x3EBA60, areaCallback) || !Matches(base+0x3EBB20, spotCallback) ||
-        !Matches(base+0x3E4EA0, browse) || !Matches(base+0x3E5D00, spots) || !Matches(base+0x3E6400, areas) ||
-        !Matches(base+0x3E8F00, close)) return false;
-    g_travelApi = {reinterpret_cast<NativeTravelApi::Execute>(base+0x4CCCE0),
-        reinterpret_cast<NativeTravelApi::Unary>(base+0x3D52C0), reinterpret_cast<NativeTravelApi::Unary>(base+0x526650),
-        reinterpret_cast<NativeTravelApi::Unary>(base+0x3DFB80), reinterpret_cast<NativeTravelApi::Unary>(base+0x3DEFE0),
-        reinterpret_cast<NativeTravelApi::Select>(base+0x526A30), reinterpret_cast<NativeTravelApi::Unary>(base+0x3EBB20),
-        reinterpret_cast<NativeTravelApi::Unary>(base+0x3EBA60)};
+    const unsigned char script[] = {
+        0x40,0x53,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xEC,0x58,0x48,0x8B,0x05
+    };
+    const unsigned char display[] = {
+        0x48,0x8B,0xC4,0x48,0x89,0x58,0x10,0x48,0x89,0x70,0x18,0x48,0x89,0x78,0x20,0x55
+    };
+    const unsigned char listBuild[] = {
+        0x48,0x8B,0xC4,0x48,0x89,0x58,0x10,0x48,0x89,0x68,0x18,0x48,0x89,0x70,0x20,0x57
+    };
+    const unsigned char listClear[] = {
+        0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x6C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57
+    };
+    const unsigned char listSelect[] = {
+        0x48,0x89,0x5C,0x24,0x18,0x55,0x48,0x83,0xEC,0x30,0x8B,0x41,0x40,0x41,0x0F,0xB6
+    };
+    const unsigned char areaCallback[] = {
+        0x40,0x53,0x48,0x83,0xEC,0x20,0x48,0x8B,0x81,0xC0,0x01,0x00,0x00,0x33,0xD2,0x48
+    };
+    const unsigned char spotCallback[] = {
+        0x40,0x53,0x48,0x83,0xEC,0x20,0x48,0x8B,0x81,0xC8,0x01,0x00,0x00,0x48,0x8B,0xD9
+    };
+    const unsigned char browse[] = {
+        0x40,0x55,0x53,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x8D,0x6C,0x24,0xD1,0x48,0x81,
+        0xEC,0xA8,0x00,0x00,0x00
+    };
+    const unsigned char spots[] = {
+        0x48,0x8B,0xC4,0x48,0x89,0x58,0x18,0x48,0x89,0x68,0x20,0x56,0x57,0x41,0x54,0x41
+    };
+    const unsigned char areas[] = {
+        0x48,0x89,0x5C,0x24,0x08,0x48,0x89,0x6C,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48
+    };
+    const unsigned char close[] = {
+        0x40,0x53,0x48,0x83,0xEC,0x30,0x48,0x63,0x81,0xEC,0x00,0x00,0x00,0x48,0x8B,0xD9
+    };
+    if (!Matches(base+0x4CD8A0, script) || !Matches(base+0x3D5E80, display) ||
+        !Matches(base+0x3E0740, listBuild) || !Matches(base+0x3DFBA0, listBuild) ||
+        !Matches(base+0x5272B0, listClear) || !Matches(base+0x527690, listSelect) ||
+        !Matches(base+0x3EC620, areaCallback) || !Matches(base+0x3EC6E0, spotCallback) ||
+        !Matches(base+0x3E5A60, browse) || !Matches(base+0x3E68C0, spots) || !Matches(base+0x3E6FC0, areas) ||
+        !Matches(base+0x3E9AC0, close)) return false;
+    g_travelApi = {reinterpret_cast<NativeTravelApi::Execute>(base+0x4CD8A0),
+        reinterpret_cast<NativeTravelApi::Unary>(base+0x3D5E80), reinterpret_cast<NativeTravelApi::Unary>(base+0x5272B0),
+        reinterpret_cast<NativeTravelApi::Unary>(base+0x3E0740), reinterpret_cast<NativeTravelApi::Unary>(base+0x3DFBA0),
+        reinterpret_cast<NativeTravelApi::Select>(base+0x527690), reinterpret_cast<NativeTravelApi::Unary>(base+0x3EC6E0),
+        reinterpret_cast<NativeTravelApi::Unary>(base+0x3EC620)};
     // Build 入口也纳入同一组：显式刷新与普通重新开图均经过统一的最终状态评估。
-    void* targets[] = {reinterpret_cast<void*>(base+0x3E4EA0), reinterpret_cast<void*>(base+0x3E5D00),
-        reinterpret_cast<void*>(base+0x3E6400), reinterpret_cast<void*>(base+0x3D52C0)};
+    void* targets[] = {reinterpret_cast<void*>(base+0x3E5A60), reinterpret_cast<void*>(base+0x3E68C0),
+        reinterpret_cast<void*>(base+0x3E6FC0), reinterpret_cast<void*>(base+0x3D5E80)};
     void* shims[] = {reinterpret_cast<void*>(&Sky2MapBrowseShim), reinterpret_cast<void*>(&Sky2SpotListShim),
         reinterpret_cast<void*>(&Sky2AreaListShim), reinterpret_cast<void*>(&Sky2BuildTravelShim)};
     void** originals[] = {&Sky2NextMapBrowse, &Sky2NextSpotList, &Sky2NextAreaList, &Sky2NextBuildTravel};

@@ -1,7 +1,7 @@
-// 仅适用于已通过完整哈希校验的游戏 1.4.0.0 / Steam build 25721473。
-// 静态证据：语言设置窗口在 RVA 0x1869F8 取全局对象、0x186A06 读取文本语言；
-// 玩家确认选择后，RVA 0x186FAC 写回同一字节。场景资源初始化 0x02FA30 读取它，
-// 并传给 0x02F330，后者按 0xAA5F30 的 jp/en/de/fr/es/tc/sc/ko 表选择语言资源。
+// 仅适用于已通过完整哈希校验的游戏 1.5.0.0 / Steam build 26290169。
+// 静态证据：语言设置窗口在 RVA 0x186AA8 取全局对象、0x186AB6 读取文本语言；
+// 玩家确认选择后，RVA 0x18705C 写回同一字节。场景资源初始化 0x02FA30 读取它，
+// 并传给 0x02F330，后者按 0xAA6F30 的 jp/en/de/fr/es/tc/sc/ko 表选择语言资源。
 // 相邻 +0x623A32 是语音语言，故这里有意只读取 +0x623A31。
 #include "game_language.h"
 #ifndef WIN32_LEAN_AND_MEAN
@@ -16,7 +16,7 @@
 
 namespace tracker {
 namespace {
-constexpr uintptr_t kSettingsManagerRva = 0xC61360;
+constexpr uintptr_t kSettingsManagerRva = 0xC624A0;
 constexpr uintptr_t kTextLanguageOffset = 0x623A31;
 constexpr ULONGLONG kRefreshIntervalMs = 250;
 std::atomic<uintptr_t> g_validatedLanguageBase{0};

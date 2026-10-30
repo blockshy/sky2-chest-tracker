@@ -2,7 +2,7 @@
 import json
 import os
 import unittest
-from installer_fixture_support import InstallerFixture, PWSH, PS51, PAYLOADS, OLD, FOREIGN, LAYOUT, digest, valid_record, PREVIOUS_EXE_HASH
+from installer_fixture_support import InstallerFixture, PWSH, PS51, PAYLOADS, OLD, FOREIGN, LAYOUT, digest, valid_record, PREVIOUS_EXE_HASH, LEGACY_EXE_HASH
 
 
 @unittest.skipUnless(os.name == 'nt' and PWSH, '需要 Windows PowerShell 环境')
@@ -73,11 +73,19 @@ class AsiSafety(InstallerFixture):
 
     def test_previous_game_records_migrate_without_rewriting_their_fingerprint(self):
         """已确认的旧版记录可以保留迁移，但绝不改写为当前游戏哈希冒充兼容记录。"""
+        self.assert_historical_records_preserved(PREVIOUS_EXE_HASH)
+
+    def test_older_game_records_remain_owned_after_two_game_updates(self):
+        """加入上一版指纹时仍保留更早发行版归属，避免第二次升级遗失旧记录。"""
+        self.assert_historical_records_preserved(LEGACY_EXE_HASH)
+
+    def assert_historical_records_preserved(self, exe_hash):
+        """用真实稳定容器核验迁移后的全部字节，不仅检查目标文件存在。"""
         self.add_legacy_data()
-        previous = valid_record(exe_hash=PREVIOUS_EXE_HASH)
+        previous = valid_record(exe_hash=exe_hash)
         self.write('Sky2Mods/Sky2ChestTracker/revisit-return.dat', previous)
         self.write('Sky2Mods/Sky2ChestTracker/revisit-history/0000000000001234.dat', previous)
-        self.receipt('asi-plugin', exe_sha256=PREVIOUS_EXE_HASH)
+        self.receipt('asi-plugin', exe_sha256=exe_hash)
         self.invoke('asi-plugin')
         self.assertFalse((self.game / 'Sky2Mods').exists())
         self.assertEqual((self.game / 'plugins/Sky2ChestTracker/revisit-return.dat').read_bytes(), previous)
